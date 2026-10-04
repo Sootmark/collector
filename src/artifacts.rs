@@ -1,8 +1,9 @@
 //! Executables named by the collected volume itself, for follow rules:
 //! what scheduled tasks run (`\Windows\System32\Tasks`) and what the
 //! registry starts at logon (the `Run` and `RunOnce` keys, machine-wide in
-//! `SOFTWARE` and per user in each `NTUSER.DAT`). Unlike the live outputs,
-//! these come from files, so they work on a disk image too.
+//! `SOFTWARE` and per user in each `NTUSER.DAT`), and what ran recently
+//! (Prefetch). Unlike the live outputs, these come from files, so they work
+//! on a disk image too.
 
 use std::io::Read;
 
@@ -13,10 +14,11 @@ use crate::pattern::Pattern;
 use crate::volume::Volume;
 
 /// The sources a follow rule may name besides command rules.
-pub(crate) const SOURCES: [&str; 2] = ["scheduled-tasks", "run-keys"];
+pub(crate) const SOURCES: [&str; 3] = ["scheduled-tasks", "run-keys", "prefetch"];
 
 /// Largest task file or hive read.
 const MAX_TASK: u64 = 1 << 20;
+const MAX_PREFETCH: u64 = 16 << 20;
 const MAX_HIVE: u64 = 512 << 20;
 
 /// The keys whose values start programs at logon, in `SOFTWARE`.
@@ -42,6 +44,7 @@ pub(crate) fn named(
     match source {
         "scheduled-tasks" => scheduled_tasks(volume, files, drive),
         "run-keys" => run_keys(volume, files, drive),
+        "prefetch" => prefetch(volume, files, drive),
         _ => Vec::new(),
     }
 }
@@ -109,6 +112,40 @@ fn run_keys(volume: &mut Volume, files: &[FileEntry], drive: char) -> Vec<String
                     }
                 }
             }
+        }
+    }
+    programs
+}
+
+/// The programs Windows recorded as run (each Prefetch file's executable,
+/// as one of the files it loaded: `\VOLUME{…}\PATH\TO\X.EXE`), taken to be
+/// on the collected volume. These may be gone since: they are listed as
+/// such.
+fn prefetch(volume: &mut Volume, files: &[FileEntry], drive: char) -> Vec<String> {
+    let pattern = Pattern::parse(r"\Windows\Prefetch\*.pf").expect("a valid pattern");
+    let mut programs = Vec::new();
+    for file in files
+        .iter()
+        .filter(|f| f.stream.is_none() && pattern.matches(&f.path, None))
+    {
+        let Some(bytes) = read(volume, file, MAX_PREFETCH) else {
+            continue;
+        };
+        let Ok(parsed) = prefetch::parse(&bytes) else {
+            continue;
+        };
+        let suffix = format!("\\{}", parsed.executable.to_uppercase());
+        let image = parsed
+            .files
+            .iter()
+            .map(|metric| metric.path.as_str())
+            .find(|path| path.to_uppercase().ends_with(&suffix));
+        // `\VOLUME{…}` then the path on that volume.
+        if let Some(rest) = image
+            .and_then(|path| path.split_once('}'))
+            .map(|(_, rest)| rest)
+        {
+            programs.push(format!("{drive}:{rest}"));
         }
     }
     programs

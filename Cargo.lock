@@ -764,6 +764,7 @@ dependencies = [
  "sootmark-age",
  "sootmark-common",
  "sootmark-disk",
+ "sootmark-prefetch",
  "sootmark-registry",
  "sootmark-zip",
  "windows-sys",
@@ -783,6 +784,12 @@ checksum = "3470d5966562c7725d57625cf87be052dfbe1fe0c50e1304ec259227cf3099cf"
 dependencies = [
  "sootmark-common",
 ]
+
+[[package]]
+name = "sootmark-prefetch"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5133f369953b21ad61c8ae02bcd22e2590904512fc7a390abf66511f2bffb026"
 
 [[package]]
 name = "sootmark-registry"

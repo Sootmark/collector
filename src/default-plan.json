@@ -122,6 +122,20 @@
       "max_bytes": 67108864
     },
     {
+      "id": "recently-run-binaries",
+      "title": "Programs Prefetch records as run, outside Windows and Program Files",
+      "follow": [
+        "prefetch"
+      ],
+      "exclude": [
+        "\\Windows\\**",
+        "\\Program Files\\**",
+        "\\Program Files (x86)\\**",
+        "\\ProgramData\\Microsoft\\Windows Defender\\**"
+      ],
+      "max_bytes": 67108864
+    },
+    {
       "id": "mft",
       "title": "Master File Table",
       "paths": [

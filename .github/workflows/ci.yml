@@ -72,6 +72,8 @@ jobs:
           print("running-binaries:", [(l["status"], l.get("path")) for l in followed][:10])
           persisting = [l for l in lines if l["rule"] == "persistence-binaries"]
           print("persistence-binaries:", [(l["status"], l.get("path")) for l in persisting][:10])
+          ran = [l for l in lines if l["rule"] == "recently-run-binaries"]
+          print("recently-run-binaries:", [(l["status"], l.get("path")) for l in ran][:10])
           outcome = json.loads(archive.read("outcome.json"))
           print(outcome)
           assert outcome["limits"]["applied"] == "yes", outcome["limits"]

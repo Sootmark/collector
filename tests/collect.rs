@@ -364,3 +364,55 @@ fn programs_scheduled_tasks_run_are_collected() {
         b"MZ"
     );
 }
+
+/// A follow rule on Prefetch: the program a Prefetch file records as run
+/// (plaso's `ONEDRIVE.EXE-7E152375.pf`, Apache-2.0) is collected, its
+/// upper-case path matched without case.
+#[test]
+fn programs_prefetch_records_are_collected() {
+    let root = std::env::temp_dir().join(format!("collector-prefetch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("Windows/Prefetch")).unwrap();
+    std::fs::create_dir_all(root.join("Users/test/AppData/Local/Microsoft/OneDrive")).unwrap();
+    std::fs::copy(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/prefetch/ONEDRIVE.EXE-7E152375.pf"
+        ),
+        root.join("Windows/Prefetch/ONEDRIVE.EXE-7E152375.pf"),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("Users/test/AppData/Local/Microsoft/OneDrive/OneDrive.exe"),
+        b"MZ",
+    )
+    .unwrap();
+    let mut volume = Volume::open_directory(&root).unwrap();
+    let options = Options {
+        drive: 'C',
+        host: "WS-042".to_owned(),
+        deadline: None,
+        job: None,
+        recipients: Vec::new(),
+        live: false,
+        limits: None,
+    };
+    let plan = r#"{ "name": "p", "rules": [ { "id": "ran", "follow": ["prefetch"] } ] }"#;
+    let (out, summary) = collect(
+        &mut volume,
+        &Plan::parse(plan).unwrap(),
+        &options,
+        Vec::new(),
+    )
+    .unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+    assert_eq!(summary.collected, 1);
+    let mut archive = zip::Archive::open(Cursor::new(out)).unwrap();
+    assert_eq!(
+        content(
+            &mut archive,
+            "C/Users/test/AppData/Local/Microsoft/OneDrive/OneDrive.exe"
+        ),
+        b"MZ"
+    );
+}
