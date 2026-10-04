@@ -78,12 +78,17 @@
     },
     {
       "id": "sessions",
-      "title": "Logged-on users",
+      "title": "Logon sessions: interactive, remote desktop and cached, with their accounts",
       "command": [
-        "query.exe",
-        "user"
+        "powershell.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "[Console]::OutputEncoding = [Text.Encoding]::UTF8; $ErrorActionPreference = 'Stop'; Get-CimInstance Win32_LogonSession -Filter 'LogonType = 2 or LogonType = 10 or LogonType = 11' | ForEach-Object { $session = $_; Get-CimAssociatedInstance -InputObject $session -ResultClassName Win32_Account | Select-Object @{n='Account';e={\"$($_.Domain)\\$($_.Name)\"}}, @{n='LogonId';e={$session.LogonId}}, @{n='LogonType';e={$session.LogonType}}, @{n='StartTime';e={if ($session.StartTime) { $session.StartTime.ToUniversalTime().ToString('o') }}} } | ConvertTo-Json -Compress"
       ],
-      "output": "sessions.txt",
+      "output": "sessions.json",
       "timeout_seconds": 60
     },
     {
