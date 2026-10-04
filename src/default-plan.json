@@ -227,6 +227,18 @@
       ]
     },
     {
+      "id": "browsers",
+      "title": "Browser history (Chrome, Edge, Brave, Firefox), with Firefox's write-ahead log",
+      "paths": [
+        "\\Users\\*\\AppData\\Local\\Google\\Chrome\\User Data\\*\\History",
+        "\\Users\\*\\AppData\\Local\\Microsoft\\Edge\\User Data\\*\\History",
+        "\\Users\\*\\AppData\\Local\\BraveSoftware\\Brave-Browser\\User Data\\*\\History",
+        "\\Users\\*\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\*\\places.sqlite",
+        "\\Users\\*\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\*\\places.sqlite-wal",
+        "\\Users\\*\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\*\\downloads.sqlite"
+      ]
+    },
+    {
       "id": "startup",
       "title": "Startup folders",
       "paths": [
