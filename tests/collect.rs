@@ -231,3 +231,40 @@ fn an_encrypted_archive_opens_with_the_case_key_only() {
     );
     assert!(!content(&mut archive, "C/$MFT").is_empty());
 }
+
+#[test]
+fn a_folder_through_the_file_api() {
+    let root = std::env::temp_dir().join(format!("collector-folder-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let history = root.join("Users/alice/AppData/Roaming/Microsoft/Windows/PowerShell/PSReadLine");
+    std::fs::create_dir_all(&history).unwrap();
+    std::fs::write(history.join("ConsoleHost_history.txt"), b"whoami\n").unwrap();
+    let mut volume = Volume::open_directory(&root).unwrap();
+    let options = Options {
+        drive: 'E',
+        host: "WS-042".to_owned(),
+        deadline: None,
+        job: None,
+        recipients: Vec::new(),
+        live: false,
+        limits: None,
+    };
+    let plan = r#"{ "name": "p", "rules": [
+        { "id": "powershell", "paths": ["\\Users\\*\\AppData\\Roaming\\Microsoft\\Windows\\PowerShell\\PSReadLine\\*.txt"] } ] }"#;
+    let (out, summary) = collect(
+        &mut volume,
+        &Plan::parse(plan).unwrap(),
+        &options,
+        Vec::new(),
+    )
+    .unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+    assert_eq!(summary.collected, 1);
+    let mut archive = zip::Archive::open(Cursor::new(out)).unwrap();
+    let stored = "E/Users/alice/AppData/Roaming/Microsoft/Windows/PowerShell/PSReadLine/ConsoleHost_history.txt";
+    assert_eq!(content(&mut archive, stored), b"whoami\n");
+    let line = &manifest(&mut archive)[0];
+    assert_eq!(text(line, "method"), Some("os-api"));
+    assert!(line.get("mft_record").is_none(), "no MFT here");
+    assert!(text(line, "modified").is_some());
+}

@@ -30,6 +30,9 @@ Options:
   --volume <device>       The volume to read raw (default: \\\\.\\C:). Needs
                           administrator rights.
   --image <file>          Collect from a raw disk image instead.
+  --path <folder>         Collect from a mounted volume that isn't NTFS (ReFS,
+                          FAT, exFAT, a share: E:\\), through the file API;
+                          files held open can't be read there.
   --drive <letter>        The volume's drive letter, for paths (default: C).
   --deadline <minutes>    Stop collecting after this long; files not reached
                           are listed as skipped.
@@ -50,6 +53,7 @@ struct Args {
     recipients: Vec<String>,
     volume: Option<String>,
     image: Option<PathBuf>,
+    path: Option<PathBuf>,
     drive: char,
     deadline: Option<Duration>,
     limits: Limits,
@@ -89,6 +93,7 @@ fn parse(args: &[String]) -> Result<Args, String> {
         recipients: Vec::new(),
         volume: None,
         image: None,
+        path: None,
         drive: 'C',
         deadline: None,
         limits: Limits {
@@ -106,6 +111,7 @@ fn parse(args: &[String]) -> Result<Args, String> {
             "--recipient" => parsed.recipients.push(value()?),
             "--volume" => parsed.volume = Some(value()?),
             "--image" => parsed.image = Some(PathBuf::from(value()?)),
+            "--path" => parsed.path = Some(PathBuf::from(value()?)),
             "--drive" => {
                 let letter = value()?;
                 parsed.drive = letter
@@ -133,8 +139,13 @@ fn parse(args: &[String]) -> Result<Args, String> {
             other => return Err(format!("unknown option '{other}'")),
         }
     }
-    if parsed.volume.is_some() && parsed.image.is_some() {
-        return Err("--volume or --image, not both".to_owned());
+    let sources = [
+        parsed.volume.is_some(),
+        parsed.image.is_some(),
+        parsed.path.is_some(),
+    ];
+    if sources.iter().filter(|&&given| given).count() > 1 {
+        return Err("one of --volume, --image and --path".to_owned());
     }
     if parsed.job.is_some() && (parsed.plan.is_some() || !parsed.recipients.is_empty()) {
         return Err(
@@ -162,10 +173,11 @@ fn run(args: &Args) -> Result<(), String> {
     if keys.is_empty() {
         eprintln!("warning: the archive is not encrypted (no job, no --recipient)");
     }
-    let mut volume = match (&args.image, &args.volume) {
-        (Some(image), _) => Volume::open_image(image),
-        (None, Some(device)) => Volume::open_device(device),
-        (None, None) => Volume::open_device(&format!(r"\\.\{}:", args.drive)),
+    let mut volume = match (&args.image, &args.path, &args.volume) {
+        (Some(image), _, _) => Volume::open_image(image),
+        (None, Some(path), _) => Volume::open_directory(path),
+        (None, None, Some(device)) => Volume::open_device(device),
+        (None, None, None) => Volume::open_device(&format!(r"\\.\{}:", args.drive)),
     }
     .map_err(|e| format!("opening the volume: {e}"))?;
     let file = OpenOptions::new()

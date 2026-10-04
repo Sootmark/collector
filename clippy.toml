@@ -1,0 +1,2 @@
+# Domain vocabulary that is prose, not code.
+doc-valid-idents = ["ReFS", "PowerShell", ".."]

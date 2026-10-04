@@ -74,6 +74,21 @@ jobs:
           '@
           $check | python - "$env:RUNNER_TEMP\triage.zip"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: "Collect a folder through the file API"
+        shell: pwsh
+        run: |
+          '{"name":"hosts","rules":[{"id":"hosts","paths":["\\etc\\hosts"]}]}' | Set-Content "$env:RUNNER_TEMP\hosts-plan.json"
+          cargo run --release --locked -- collect --path C:\Windows\System32\drivers --plan "$env:RUNNER_TEMP\hosts-plan.json" --output "$env:RUNNER_TEMP\hosts.zip"
+          $check = @'
+          import json, sys, zipfile
+          archive = zipfile.ZipFile(sys.argv[1])
+          line = json.loads(archive.read("manifest.jsonl").decode().splitlines()[0])
+          print(line)
+          assert line["status"] == "ok" and line["method"] == "os-api", line
+          assert archive.read(line["stored"]), "hosts is empty"
+          '@
+          $check | python - "$env:RUNNER_TEMP\hosts.zip"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   supply-chain:
     runs-on: ubuntu-latest

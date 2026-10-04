@@ -1,12 +1,17 @@
-//! The NTFS volume collected from, read raw through `sootmark-disk`: a live
-//! volume (`\\.\C:`, where Windows keeps files open that no API copies:
-//! `$MFT`, the registry hives) or a disk image, the same code either way.
+//! The volume collected from. NTFS is read raw through `sootmark-disk`: a
+//! live volume (`\\.\C:`, where Windows keeps files open that no API
+//! copies: `$MFT`, the registry hives) or a disk image, the same code either
+//! way. Any other mounted volume (ReFS, FAT, exFAT, a network share) is
+//! walked through the operating system's file API, which can't read files
+//! held open, and says so for each.
 
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
-use disk::{identify, partitions, FileEntry, Filesystem, NtfsVolume, SECTOR_SIZE};
+use common::time::Ts;
+use disk::{identify, partitions, FileEntry, Filesystem, NtfsVolume, Times, SECTOR_SIZE};
 
 /// Bytes a raw device is read in: whole sectors, and enough to make
 /// sequential reads cheap.
@@ -19,12 +24,22 @@ const TOTAL_SECTORS_AT: usize = 0x28;
 pub trait Disk: Read + Seek {}
 impl<T: Read + Seek> Disk for T {}
 
-/// An open NTFS volume.
+/// An open volume.
 pub struct Volume {
-    disk: Box<dyn Disk>,
-    ntfs: NtfsVolume,
+    reader: Reader,
     /// What was opened, for the record.
     pub source: String,
+}
+
+/// How a volume's files are read.
+enum Reader {
+    /// NTFS, raw.
+    Raw {
+        disk: Box<dyn Disk>,
+        ntfs: NtfsVolume,
+    },
+    /// A mounted volume, through the file API.
+    Directory { root: PathBuf },
 }
 
 impl Volume {
@@ -40,8 +55,10 @@ impl Volume {
         device.length = length;
         let ntfs = NtfsVolume::open(&mut device, 0, length)?;
         Ok(Self {
-            disk: Box::new(device),
-            ntfs,
+            reader: Reader::Raw {
+                disk: Box::new(device),
+                ntfs,
+            },
             source: path.to_owned(),
         })
     }
@@ -72,10 +89,38 @@ impl Volume {
         }
         let (_, _, ntfs) = best.ok_or_else(|| invalid("no NTFS volume in the image"))?;
         Ok(Self {
-            disk: Box::new(file),
-            ntfs,
+            reader: Reader::Raw {
+                disk: Box::new(file),
+                ntfs,
+            },
             source: path.display().to_string(),
         })
+    }
+
+    /// A mounted volume or folder (`E:\`, `/mnt/share`), read through the
+    /// operating system: for volumes that aren't NTFS.
+    ///
+    /// # Errors
+    /// When `root` isn't a folder.
+    pub fn open_directory(root: &Path) -> io::Result<Self> {
+        if !fs::metadata(root)?.is_dir() {
+            return Err(invalid("not a folder"));
+        }
+        Ok(Self {
+            reader: Reader::Directory {
+                root: root.to_owned(),
+            },
+            source: root.display().to_string(),
+        })
+    }
+
+    /// How files are read, for the manifest: `raw-ntfs` or `os-api`.
+    #[must_use]
+    pub fn method(&self) -> &'static str {
+        match self.reader {
+            Reader::Raw { .. } => "raw-ntfs",
+            Reader::Directory { .. } => "os-api",
+        }
     }
 
     /// Every file and stream on the volume.
@@ -83,7 +128,14 @@ impl Volume {
     /// # Errors
     /// When the MFT can't be read.
     pub fn files(&mut self) -> io::Result<Vec<FileEntry>> {
-        self.ntfs.files(&mut self.disk)
+        match &mut self.reader {
+            Reader::Raw { disk, ntfs } => ntfs.files(disk),
+            Reader::Directory { root } => {
+                let mut files = Vec::new();
+                walk(root, &mut Vec::new(), &mut files);
+                Ok(files)
+            }
+        }
     }
 
     /// Hand `file`'s content to `consume`.
@@ -95,8 +147,54 @@ impl Volume {
         file: &FileEntry,
         consume: &mut dyn FnMut(&mut dyn Read) -> io::Result<()>,
     ) -> io::Result<()> {
-        self.ntfs.read(&mut self.disk, file, consume)
+        match &mut self.reader {
+            Reader::Raw { disk, ntfs } => ntfs.read(disk, file, consume),
+            Reader::Directory { root } => {
+                let path = file
+                    .path
+                    .iter()
+                    .fold(root.clone(), |path, part| path.join(part));
+                consume(&mut io::BufReader::new(File::open(path)?))
+            }
+        }
     }
+}
+
+/// The files under `dir` (at `at` from the root), symbolic links not
+/// followed. A folder that can't be listed is left out: its files can't be
+/// read either.
+fn walk(dir: &Path, at: &mut Vec<String>, files: &mut Vec<FileEntry>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(metadata) = fs::symlink_metadata(entry.path()) else {
+            continue;
+        };
+        at.push(entry.file_name().to_string_lossy().into_owned());
+        if metadata.is_dir() {
+            walk(&entry.path(), at, files);
+        } else if metadata.is_file() {
+            files.push(FileEntry {
+                path: at.clone(),
+                record: 0,
+                stream: None,
+                size: metadata.len(),
+                times: Times {
+                    created: metadata.created().ok().and_then(utc),
+                    modified: metadata.modified().ok().and_then(utc),
+                    changed: None,
+                    accessed: metadata.accessed().ok().and_then(utc),
+                },
+            });
+        }
+        at.pop();
+    }
+}
+
+fn utc(time: SystemTime) -> Option<Ts> {
+    let since = time.duration_since(SystemTime::UNIX_EPOCH).ok()?;
+    Some(Ts::from_unix_micros(i64::try_from(since.as_micros()).ok()?))
 }
 
 /// An NTFS volume's size, from its boot sector: its sectors and the backup

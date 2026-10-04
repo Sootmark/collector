@@ -93,7 +93,7 @@ pub fn collect<W: Write>(
     let mut archive = zip::Writer::new(out);
     let mut manifest = Vec::new();
     let mut summary = Summary::default();
-    let mut taken: HashSet<(u64, Option<String>)> = HashSet::new();
+    let mut taken: HashSet<(Vec<String>, Option<String>)> = HashSet::new();
     for rule in &plan.rules {
         let late = options.deadline.is_some_and(|d| Instant::now() >= d);
         match &rule.what {
@@ -119,7 +119,7 @@ pub fn collect<W: Write>(
                     ]));
                 }
                 for file in matched {
-                    if !taken.insert((file.record, file.stream.clone())) {
+                    if !taken.insert((file.path.clone(), file.stream.clone())) {
                         continue;
                     }
                     let line = if options.deadline.is_some_and(|d| Instant::now() >= d) {
@@ -128,6 +128,7 @@ pub fn collect<W: Write>(
                             rule,
                             file,
                             options.drive,
+                            volume.method(),
                             "skipped_limit",
                             None,
                             Some("deadline reached"),
@@ -311,7 +312,15 @@ fn copy<W: Write>(
                 summary.collected += 1;
                 "ok"
             };
-            let mut line = listing(rule, file, drive, status, Some(&name), why.as_deref());
+            let mut line = listing(
+                rule,
+                file,
+                drive,
+                volume.method(),
+                status,
+                Some(&name),
+                why.as_deref(),
+            );
             push(&mut line, "collected_bytes", Json::from(size));
             if skipped > 0 {
                 // The stored copy starts this far into the file.
@@ -325,7 +334,15 @@ fn copy<W: Write>(
             let why = result
                 .err()
                 .map_or_else(|| "not read".to_owned(), |e| e.to_string());
-            listing(rule, file, drive, "error", None, Some(&why))
+            listing(
+                rule,
+                file,
+                drive,
+                volume.method(),
+                "error",
+                None,
+                Some(&why),
+            )
         }
     }
 }
@@ -336,6 +353,7 @@ fn listing(
     rule: &Rule,
     file: &FileEntry,
     drive: char,
+    method: &str,
     status: &str,
     stored: Option<&str>,
     why: Option<&str>,
@@ -346,11 +364,13 @@ fn listing(
             "path",
             Json::from(format!("{drive}:\\{}", file.display_path()).as_str()),
         ),
-        ("method", Json::from("raw-ntfs")),
-        ("mft_record", Json::from(file.record)),
-        ("size", Json::from(file.size)),
-        ("status", Json::from(status)),
+        ("method", Json::from(method)),
     ]);
+    if method == "raw-ntfs" {
+        push(&mut line, "mft_record", Json::from(file.record));
+    }
+    push(&mut line, "size", Json::from(file.size));
+    push(&mut line, "status", Json::from(status));
     if let Some(stored) = stored {
         push(&mut line, "stored", Json::from(stored));
     }

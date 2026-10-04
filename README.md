@@ -9,7 +9,7 @@ sootmark-collector collect --output E:\ws042.zip --plan my-plan.json --deadline 
 sootmark-collector collect --output triage.zip --image disk.raw
 ```
 
-Run it as an administrator (raw volume access needs it), and write the archive to another volume than the one collected.
+Run it as an administrator (raw volume access needs it), and write the archive to another volume than the one collected. A volume that isn't NTFS (ReFS, FAT, exFAT, a share) is collected with `--path E:\`, through the file API: the manifest says so (`os-api`), and files held open there are listed as unreadable, with why.
 
 A **job** is how a case asks for a collection: the workbench writes it with the plan, the case's key and an expiry, and signs it with the analyst's key. The collector refuses a job that was changed, has expired or is dated in the future, and shows who signed it and the key's fingerprint, for whoever runs it to confirm. The archive is then encrypted to the case in the [age](https://age-encryption.org) format (`sootmark-age`): only the case can read it, with Sootmark or the standard `age` tool. Without a job, `--recipient age1…` encrypts to a key you give; with neither, the collector warns that the archive is not encrypted.
 
@@ -25,7 +25,7 @@ A **job** is how a case asks for a collection: the workbench writes it with the 
 - **A deadline** (`--deadline <minutes>`): past it, files not yet reached are listed as skipped and the archive is closed, valid.
 - Large files are streamed, never copied to a temporary file or held in memory; hashes are computed on the way.
 
-Not yet: the OS API for volumes that aren't NTFS, and collecting what parsed artifacts point to.
+Not yet: collecting what parsed artifacts point to.
 
 ## How it's checked
 
