@@ -7,7 +7,10 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use collector::{collect, Job, JobRecord, Options, Plan, Summary, Volume, DEFAULT_PLAN};
+use collector::{
+    apply_limits, collect, Applied, Job, JobRecord, Limits, Options, Plan, Summary, Volume,
+    DEFAULT_PLAN,
+};
 
 const USAGE: &str = "sootmark-collector: collect a Windows triage into one zip
 
@@ -30,7 +33,15 @@ Options:
   --drive <letter>        The volume's drive letter, for paths (default: C).
   --deadline <minutes>    Stop collecting after this long; files not reached
                           are listed as skipped.
+  --cpu <percent>         Most of the machine's CPU the collector (and its
+                          commands) may use (default 50). It also runs at
+                          background priority, CPU and disk.
+  --max-memory <MiB>      Most memory it (and each command) may use (default 4096).
   --print-plan            Print the built-in plan and exit.";
+
+/// The collector's share of the machine, unless told otherwise.
+const DEFAULT_CPU_PERCENT: u32 = 50;
+const DEFAULT_MAX_MEMORY_MIB: u64 = 4096;
 
 struct Args {
     output: PathBuf,
@@ -41,6 +52,7 @@ struct Args {
     image: Option<PathBuf>,
     drive: char,
     deadline: Option<Duration>,
+    limits: Limits,
 }
 
 fn main() -> ExitCode {
@@ -79,6 +91,10 @@ fn parse(args: &[String]) -> Result<Args, String> {
         image: None,
         drive: 'C',
         deadline: None,
+        limits: Limits {
+            cpu_percent: DEFAULT_CPU_PERCENT,
+            max_memory_mib: DEFAULT_MAX_MEMORY_MIB,
+        },
     };
     let mut output = None;
     while let Some(arg) = args.next() {
@@ -98,6 +114,17 @@ fn parse(args: &[String]) -> Result<Args, String> {
                     .filter(|c| c.is_ascii_alphabetic() && letter.len() == 1)
                     .ok_or("--drive takes a letter")?
                     .to_ascii_uppercase();
+            }
+            "--cpu" => {
+                let percent: u32 = value()?.parse().map_err(|_| "--cpu takes a percentage")?;
+                if !(1..=100).contains(&percent) {
+                    return Err("--cpu takes a percentage from 1 to 100".to_owned());
+                }
+                parsed.limits.cpu_percent = percent;
+            }
+            "--max-memory" => {
+                parsed.limits.max_memory_mib =
+                    value()?.parse().map_err(|_| "--max-memory takes MiB")?;
             }
             "--deadline" => {
                 let minutes: u64 = value()?.parse().map_err(|_| "--deadline takes minutes")?;
@@ -120,6 +147,10 @@ fn parse(args: &[String]) -> Result<Args, String> {
 
 fn run(args: &Args) -> Result<(), String> {
     let started = Instant::now();
+    let applied = apply_limits(args.limits);
+    if let Applied::No(why) = &applied {
+        eprintln!("warning: running without resource limits: {why}");
+    }
     let (plan, recipients, job) = what_to_do(args)?;
     let keys = recipients
         .iter()
@@ -150,6 +181,7 @@ fn run(args: &Args) -> Result<(), String> {
         recipients,
         // Commands describe the running host, not an image of a disk.
         live: args.image.is_none(),
+        limits: Some((args.limits, applied)),
     };
     let out = BufWriter::new(file);
     let summary = if keys.is_empty() {

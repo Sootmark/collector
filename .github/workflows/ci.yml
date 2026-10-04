@@ -68,7 +68,9 @@ jobs:
               rows = json.loads(text) if text else []
               rows = rows if isinstance(rows, list) else [rows]
               print(rule, len(rows), rows[:1])
-          print(json.loads(archive.read("outcome.json")))
+          outcome = json.loads(archive.read("outcome.json"))
+          print(outcome)
+          assert outcome["limits"]["applied"] == "yes", outcome["limits"]
           '@
           $check | python - "$env:RUNNER_TEMP\triage.zip"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

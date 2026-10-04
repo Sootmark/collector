@@ -26,11 +26,16 @@ zip = { package = "sootmark-zip", version = "0.4.0" }
 # Signatures are never written in-house (D11): ed25519-dalek (BSD-3-Clause).
 ed25519-dalek = { version = "2.1", default-features = false, features = ["std"] }
 
+# Windows' own declarations for the few calls that set the collector's
+# priority and limits (src/limits.rs); MIT OR Apache-2.0, no logic.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
 [dev-dependencies]
 proptest = "1"
 
 [lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 missing_docs = "warn"
 
 [lints.clippy]

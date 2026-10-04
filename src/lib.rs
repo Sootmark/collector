@@ -11,12 +11,14 @@
 mod collect;
 mod command;
 mod job;
+mod limits;
 mod pattern;
 mod plan;
 mod volume;
 
 pub use collect::{collect, JobRecord, Options, Summary, MANIFEST, OUTCOME};
 pub use job::{Job, JobError, SIGNED_PREFIX};
+pub use limits::{apply as apply_limits, Applied, Limits};
 pub use pattern::{Pattern, PatternError};
 pub use plan::{Plan, PlanError, Rule, What, DEFAULT as DEFAULT_PLAN};
 pub use volume::{Disk, Volume};

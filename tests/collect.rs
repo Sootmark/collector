@@ -45,6 +45,7 @@ fn run(plan: &str) -> (zip::Archive<Cursor<Vec<u8>>>, collector::Summary) {
         job: None,
         recipients: Vec::new(),
         live: false,
+        limits: None,
     };
     let (out, summary) = collect(
         &mut volume,
@@ -193,6 +194,7 @@ fn an_encrypted_archive_opens_with_the_case_key_only() {
         }),
         recipients: vec![recipient.to_string()],
         live: false,
+        limits: None,
     };
     let encryptor = age::Encryptor::new(Vec::new(), &[recipient]).unwrap();
     let (encryptor, _) = collect(

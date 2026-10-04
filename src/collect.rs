@@ -16,6 +16,7 @@ use common::time::Ts;
 use disk::{FileEntry, Times};
 
 use crate::command::{self, Ran};
+use crate::limits::{Applied, Limits};
 use crate::plan::{Plan, Rule, What};
 use crate::volume::Volume;
 
@@ -42,6 +43,9 @@ pub struct Options {
     /// Collecting from the running host (not a disk image): command rules
     /// run only then.
     pub live: bool,
+    /// The resource limits asked for and whether they took effect, for
+    /// the record.
+    pub limits: Option<(Limits, Applied)>,
 }
 
 /// What `outcome.json` says of the job a run carried out.
@@ -425,6 +429,24 @@ fn outcome(
                     ("fingerprint", Json::from(job.fingerprint.as_str())),
                 ])
             }),
+        ),
+        (
+            "limits",
+            options
+                .limits
+                .as_ref()
+                .map_or(Json::Null, |(limits, applied)| {
+                    let applied = match applied {
+                        Applied::Yes => "yes".to_owned(),
+                        Applied::No(why) => format!("no: {why}"),
+                        Applied::NotWindows => "no: not a Windows host".to_owned(),
+                    };
+                    Json::object([
+                        ("cpu_percent", Json::from(u64::from(limits.cpu_percent))),
+                        ("max_memory_mib", Json::from(limits.max_memory_mib)),
+                        ("applied", Json::from(applied.as_str())),
+                    ])
+                }),
         ),
         (
             "encrypted_to",

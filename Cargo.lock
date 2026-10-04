@@ -765,6 +765,7 @@ dependencies = [
  "sootmark-common",
  "sootmark-disk",
  "sootmark-zip",
+ "windows-sys",
 ]
 
 [[package]]
