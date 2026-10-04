@@ -12,13 +12,16 @@ mod artifacts;
 mod collect;
 mod command;
 mod follow;
+mod forensic_artifacts;
 mod job;
 mod limits;
 mod pattern;
 mod plan;
 mod volume;
+mod yaml;
 
 pub use collect::{collect, JobRecord, Options, Summary, MANIFEST, OUTCOME};
+pub use forensic_artifacts::{build as plan_from_artifacts, Built, ImportError};
 pub use job::{Job, JobError, SIGNED_PREFIX};
 pub use limits::{apply as apply_limits, Applied, Limits};
 pub use pattern::{Pattern, PatternError};

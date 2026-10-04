@@ -1,0 +1,3 @@
+ForensicArtifacts (https://github.com/ForensicArtifacts/artifacts),
+Apache-2.0: tests/fetch-forensic-artifacts.sh downloads its definition files
+(artifacts/data/*.yaml) here at a pinned commit; they are not committed.

@@ -25,6 +25,13 @@ jobs:
         run: cargo fmt --check
       - name: Lint
         run: cargo clippy --all-targets --locked
+      - name: Cache ForensicArtifacts' definitions
+        uses: actions/cache@v4
+        with:
+          path: tests/fixtures/forensic-artifacts/*.yaml
+          key: forensic-artifacts-${{ hashFiles('tests/fetch-forensic-artifacts.sh') }}
+      - name: Fetch ForensicArtifacts' definitions
+        run: sh tests/fetch-forensic-artifacts.sh
       - name: Test
         run: cargo test --locked
       - name: Docs

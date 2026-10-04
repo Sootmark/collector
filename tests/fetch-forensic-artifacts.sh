@@ -1,0 +1,48 @@
+#!/bin/sh
+# Download ForensicArtifacts' definitions (Apache-2.0, artifacts/data/*.yaml)
+# at a pinned commit, checking their SHA-256, into
+# tests/fixtures/forensic-artifacts/ for tests/forensic_artifacts.rs. Without
+# them, that test is skipped.
+set -eu
+cd "$(dirname "$0")/fixtures/forensic-artifacts"
+commit=72726309f0cf8232d633c27e26dc1c0348709351
+base="https://raw.githubusercontent.com/ForensicArtifacts/artifacts/$commit/artifacts/data"
+for file in antivirus.yaml applications.yaml cloud_services.yaml config_files.yaml containerd.yaml database_servers.yaml docker.yaml esxi.yaml file_systems.yaml hadoop.yaml ics.yaml installed_module_paths.yaml installed_modules.yaml instant_messaging.yaml java.yaml kaspersky_careto.yaml kubernetes.yaml legacy.yaml linux.yaml linux_proc.yaml linux_services.yaml macos.yaml shell.yaml tomcat.yaml triage.yaml unix_common.yaml user.yaml webbrowser.yaml webservers.yaml windows.yaml windows_dll_hijacking.yaml wmi.yaml ; do
+    if [ ! -f "$file" ]; then
+        curl -sfL -o "$file" "$base/$file"
+    fi
+done
+shasum -a 256 -c --quiet - <<SUMS
+c2caa25eaef049a314295081e40fa3d5170dd9764e3bb54ec7bcd81a385c5c0f  antivirus.yaml
+75a51f3e19f569196a5fec20cb244e238d9c2f2bcc38623c403080baaf9b4ad6  applications.yaml
+6bb854bdf877e6fbf0ba374eff6b77f64581da994678e38f3c72003237c3e184  cloud_services.yaml
+2f1fa2744de9ad051630b34bde112e01f906f7fb14d66994257cea7599e3d0bb  config_files.yaml
+fa119fd9654a4deb7c497e860eedf24aa07410d71e891ba592f0acb08a2b389e  containerd.yaml
+e355b23c404412204c8c0ccec6d3f001e45afb6ef2cef69ad72fcad498297d20  database_servers.yaml
+fd93b98eab348371304d770348c8380b4b2154c4766cdf05a6aaeb8fd0564bd6  docker.yaml
+f7126cca972c6f3ac8029ff635fdef7abf94306390788893e92677bef06a44e7  esxi.yaml
+3815f0df00383f4870dacd7e0861d8b72879a93d3f8bec2f1e0b7b2dcc3b94da  file_systems.yaml
+48bfb9e3b472b23104a2276c7f9e089c07536eb98dcf770b062566dd42999f45  hadoop.yaml
+1da75b12ef32726fc6bc85b0424b4e2bbf72b5ba2018a34ff02d50a651d6be56  ics.yaml
+4a8ec1c138b711457ef203f9f1bfe85fc0a69e5b85d1a5acf1a9dcafb6400675  installed_module_paths.yaml
+a48cc4752b63a6170818883134eddee4d1c2c9df5d2a4598b1bfd4388025860a  installed_modules.yaml
+0154017196f1f1a5622b5027e492f26e08dbc5f067e09d296ac1c4c580d99ce0  instant_messaging.yaml
+8b6473696f0eb4403f4b9b42a4be8d34371b1f066fb5205ed75b410e66b31d90  java.yaml
+0215c5a00a78e34d691031d34d1bbf184b11e80eb952b0ac75f3e0745b0cabe0  kaspersky_careto.yaml
+5091d5c8bbb52429e7525fc2f2162db3912e1f88f68321a3bd7038341cf18e3d  kubernetes.yaml
+e5af9bd70588179921c320bfaedaf45d7259a1357bd68edca82c30334a45bd7e  legacy.yaml
+098c1d2b62b278431644b2ede3259cbaa81ee902e9918ee934e293913d0fa79c  linux.yaml
+dc69a90a6fb723f783c2d1a6ae02802aa8f48772b7f8193902438e862fca9d13  linux_proc.yaml
+326b167dcaff9065b618d82529228744fc52e3b698bb21b184fa14cb0e993b15  linux_services.yaml
+f45b79d988745a0341f322b37f985f644f26f41a92af7a5c51bb3ef25a3bf3d0  macos.yaml
+d1d1f98d5fd3dd665949f838ae2ca0ee288b02914750c8bac597beb488b91aa6  shell.yaml
+30241f0ecfeca1340e636bd3e053ab322e8c778546837f2e8c7981e74ed0ca69  tomcat.yaml
+02f66697ae3952bb59e5815f01f8f7941765a2961fa5bcaf46156708b103312d  triage.yaml
+f19ee95eb38fc3876713078a8c6c95357f4a3585efa6e8360ee34b805f22726d  unix_common.yaml
+4a88192ea1c5a3ea9be4d3fae9e16be46cfa22792f4561641bc02f77cdb1cb65  user.yaml
+1c0ec7fa0c5a0f2c951bfbb556f555e09f0dcaee082d427c319678102b6212bc  webbrowser.yaml
+a803fb925932de424b45736fd178e61e02f062adca1c5548703fc2578ce0a08f  webservers.yaml
+ec1beb3e653e32f09d8a1a72503d30632a7e6d1ba0187222c5105c56ac488f5b  windows.yaml
+885be75865135a3e3e5973dee41d5475bc4dfa84c2ef8737eb034470883217ec  windows_dll_hijacking.yaml
+24d9f30bc016b903495bdd1ac148a5f2e1829d6c61c12ce1b0d58239cd3ec4ff  wmi.yaml
+SUMS

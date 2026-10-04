@@ -17,6 +17,7 @@ const USAGE: &str = "sootmark-collector: collect a Windows triage into one zip
 Usage:
   sootmark-collector collect --job <job.json> --output <file.zip.age> [options]
   sootmark-collector collect --output <file.zip> [--plan <file.json>] [--recipient <age1…>] [options]
+  sootmark-collector plan-from-artifacts --artifacts <Name,…> [--name <plan>] <definitions.yaml>…
 
 Options:
   --job <job.json>        A job the case prepared and signed: its plan, the key
@@ -40,7 +41,13 @@ Options:
                           commands) may use (default 50). It also runs at
                           background priority, CPU and disk.
   --max-memory <MiB>      Most memory it (and each command) may use (default 4096).
-  --print-plan            Print the built-in plan and exit.";
+  --print-plan            Print the built-in plan and exit.
+
+plan-from-artifacts prints a plan collecting the ForensicArtifacts
+definitions named (and the artifacts their groups name), read from the
+definition files given (github.com/ForensicArtifacts/artifacts,
+artifacts/data/*.yaml); what the collector can't gather from a volume
+(registry, commands, WMI) is listed on stderr.";
 
 /// The collector's share of the machine, unless told otherwise.
 const DEFAULT_CPU_PERCENT: u32 = 50;
@@ -59,11 +66,62 @@ struct Args {
     limits: Limits,
 }
 
+/// `plan-from-artifacts`: the plan on stdout, what was left out on stderr.
+fn plan_from_artifacts(args: &[String]) -> Result<(), String> {
+    let mut name = "forensic-artifacts".to_owned();
+    let mut wanted = Vec::new();
+    let mut files = Vec::new();
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        let mut value = || {
+            args.next()
+                .cloned()
+                .ok_or_else(|| format!("{arg} needs a value"))
+        };
+        match arg.as_str() {
+            "--artifacts" => wanted.extend(
+                value()?
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|w| !w.is_empty())
+                    .map(str::to_owned),
+            ),
+            "--name" => name = value()?,
+            other if other.starts_with("--") => return Err(format!("unknown option {other}")),
+            file => files.push(file.to_owned()),
+        }
+    }
+    if wanted.is_empty() || files.is_empty() {
+        return Err("plan-from-artifacts needs --artifacts and definition files".to_owned());
+    }
+    let texts = files
+        .iter()
+        .map(|file| fs::read_to_string(file).map_err(|e| format!("{file}: {e}")))
+        .collect::<Result<Vec<_>, _>>()?;
+    let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+    let wanted: Vec<&str> = wanted.iter().map(String::as_str).collect();
+    let built = collector::plan_from_artifacts(&name, &texts, &wanted).map_err(|e| e.0)?;
+    for line in &built.left_out {
+        eprintln!("left out: {line}");
+    }
+    println!("{}", built.plan);
+    Ok(())
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--print-plan") {
         print!("{DEFAULT_PLAN}");
         return ExitCode::SUCCESS;
+    }
+    if args.first().map(String::as_str) == Some("plan-from-artifacts") {
+        return match plan_from_artifacts(&args[1..]) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(message) => {
+                eprintln!("error: {message}\n\n{USAGE}");
+                ExitCode::from(2)
+            }
+        };
     }
     let parsed = match parse(&args) {
         Ok(parsed) => parsed,
