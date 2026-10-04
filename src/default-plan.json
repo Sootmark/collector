@@ -243,6 +243,14 @@
       ]
     },
     {
+      "id": "timeline",
+      "title": "Windows 10 Timeline (ActivitiesCache.db) with its write-ahead log",
+      "paths": [
+        "\\Users\\*\\AppData\\Local\\ConnectedDevicesPlatform\\*\\ActivitiesCache.db",
+        "\\Users\\*\\AppData\\Local\\ConnectedDevicesPlatform\\*\\ActivitiesCache.db-wal"
+      ]
+    },
+    {
       "id": "recycle-bin",
       "title": "Recycle Bin index files: each deleted file's original path, size and deletion time",
       "paths": [

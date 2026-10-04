@@ -1,6 +1,6 @@
 [package]
 name = "sootmark-collector"
-version = "0.7.4"
+version = "0.7.5"
 edition = "2021"
 rust-version = "1.85"
 description = "A forensic triage collector for Windows: reads NTFS raw (locked files, $MFT, $UsnJrnl, hives with their logs) and streams what a signed job names into one zip with a hashed manifest, encrypted to the case. Open source, so what runs on your hosts can be read."
