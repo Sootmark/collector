@@ -228,11 +228,14 @@
     },
     {
       "id": "browsers",
-      "title": "Browser history (Chrome, Edge, Brave, Firefox with its write-ahead log, Internet Explorer and legacy Edge's WebCache)",
+      "title": "Browser history (Chrome, Edge, Brave and Firefox with their write-ahead logs, Internet Explorer and legacy Edge's WebCache)",
       "paths": [
         "\\Users\\*\\AppData\\Local\\Google\\Chrome\\User Data\\*\\History",
+        "\\Users\\*\\AppData\\Local\\Google\\Chrome\\User Data\\*\\History-wal",
         "\\Users\\*\\AppData\\Local\\Microsoft\\Edge\\User Data\\*\\History",
+        "\\Users\\*\\AppData\\Local\\Microsoft\\Edge\\User Data\\*\\History-wal",
         "\\Users\\*\\AppData\\Local\\BraveSoftware\\Brave-Browser\\User Data\\*\\History",
+        "\\Users\\*\\AppData\\Local\\BraveSoftware\\Brave-Browser\\User Data\\*\\History-wal",
         "\\Users\\*\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\*\\places.sqlite",
         "\\Users\\*\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\*\\places.sqlite-wal",
         "\\Users\\*\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\*\\downloads.sqlite",
