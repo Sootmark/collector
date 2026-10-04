@@ -757,7 +757,7 @@ dependencies = [
 
 [[package]]
 name = "sootmark-collector"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "ed25519-dalek",
  "proptest",
@@ -793,9 +793,9 @@ checksum = "5133f369953b21ad61c8ae02bcd22e2590904512fc7a390abf66511f2bffb026"
 
 [[package]]
 name = "sootmark-registry"
-version = "0.6.3"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9f39c8ee1a1e216a06b1063242301c12056b378ee994dcf44acda2ff483ccc3"
+checksum = "a6469e36890cd56e1aa43762820b42fc8904c980029926ac9e71ead5b09733fc"
 dependencies = [
  "sootmark-shell",
 ]

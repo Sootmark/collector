@@ -108,10 +108,11 @@
     },
     {
       "id": "persistence-binaries",
-      "title": "Programs scheduled tasks and Run keys start, outside Windows and Program Files",
+      "title": "Programs scheduled tasks, Run keys and services start, outside Windows and Program Files",
       "follow": [
         "scheduled-tasks",
-        "run-keys"
+        "run-keys",
+        "service-keys"
       ],
       "exclude": [
         "\\Windows\\**",

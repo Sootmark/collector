@@ -1,8 +1,8 @@
 //! Executables named by the collected volume itself, for follow rules:
-//! what scheduled tasks run (`\Windows\System32\Tasks`) and what the
+//! what scheduled tasks run (`\Windows\System32\Tasks`), what the
 //! registry starts at logon (the `Run` and `RunOnce` keys, machine-wide in
-//! `SOFTWARE` and per user in each `NTUSER.DAT`), and what ran recently
-//! (Prefetch). Unlike the live outputs, these come from files, so they work
+//! `SOFTWARE` and per user in each `NTUSER.DAT`), what services and drivers
+//! run (`SYSTEM`'s service keys), and what ran recently (Prefetch). Unlike the live outputs, these come from files, so they work
 //! on a disk image too.
 
 use std::io::Read;
@@ -14,7 +14,7 @@ use crate::pattern::Pattern;
 use crate::volume::Volume;
 
 /// The sources a follow rule may name besides command rules.
-pub(crate) const SOURCES: [&str; 3] = ["scheduled-tasks", "run-keys", "prefetch"];
+pub(crate) const SOURCES: [&str; 4] = ["scheduled-tasks", "run-keys", "service-keys", "prefetch"];
 
 /// Largest task file or hive read.
 const MAX_TASK: u64 = 1 << 20;
@@ -44,6 +44,7 @@ pub(crate) fn named(
     match source {
         "scheduled-tasks" => scheduled_tasks(volume, files, drive),
         "run-keys" => run_keys(volume, files, drive),
+        "service-keys" => service_keys(volume, files, drive),
         "prefetch" => prefetch(volume, files, drive),
         _ => Vec::new(),
     }
@@ -115,6 +116,94 @@ fn run_keys(volume: &mut Volume, files: &[FileEntry], drive: char) -> Vec<String
         }
     }
     programs
+}
+
+/// What each service and driver of `SYSTEM`'s current control set runs:
+/// its `ImagePath`, and for a service `svchost.exe` hosts, the DLL its
+/// `Parameters\ServiceDll` names (the usual way to persist as a service
+/// without a program of one's own).
+fn service_keys(volume: &mut Volume, files: &[FileEntry], drive: char) -> Vec<String> {
+    let system = Pattern::parse(r"\Windows\System32\config\SYSTEM").expect("a valid pattern");
+    files
+        .iter()
+        .filter(|f| f.stream.is_none() && system.matches(&f.path, None))
+        .filter_map(|file| read(volume, file, MAX_HIVE))
+        .flat_map(|bytes| services(&bytes, drive))
+        .collect()
+}
+
+/// The files the services of a `SYSTEM` hive's current control set run.
+fn services(hive: &[u8], drive: char) -> Vec<String> {
+    let Ok(hive) = registry::Hive::parse(hive) else {
+        return Vec::new();
+    };
+    let Ok(Some(control_set)) = hive.current_control_set() else {
+        return Vec::new();
+    };
+    let Ok(Some(services)) = hive.open(&format!(r"{control_set}\Services")) else {
+        return Vec::new();
+    };
+    let mut programs = Vec::new();
+    for service in services.subkeys().unwrap_or_default() {
+        let dll = service
+            .subkey("Parameters")
+            .ok()
+            .flatten()
+            .and_then(|parameters| string(&parameters, "ServiceDll"));
+        for text in [string(&service, "ImagePath"), dll].into_iter().flatten() {
+            programs.extend(service_binary(&text, drive));
+        }
+    }
+    programs
+}
+
+/// The text of value `name` of `key`, if it is text.
+fn string(key: &registry::Key<'_>, name: &str) -> Option<String> {
+    match key.value(name).ok()??.data() {
+        registry::Data::String(text) => Some(text),
+        _ => None,
+    }
+}
+
+/// The file an `ImagePath` or `ServiceDll` names, as a host path: quoted
+/// or not, with arguments or not, `\SystemRoot\…`, `\??\C:\…`,
+/// `%SystemRoot%\…`, relative to the Windows folder
+/// (`System32\drivers\x.sys`, as drivers' often are), or a bare name
+/// (`x.dll`, loaded from `System32`); doubled separators collapsed.
+fn service_binary(text: &str, drive: char) -> Option<String> {
+    let text = text.trim();
+    let text = text.strip_prefix(r"\??\").unwrap_or(text);
+    let windows = format!(r"{drive}:\Windows");
+    let mut text = match strip_prefix_ignore_case(text, r"\SystemRoot\") {
+        Some(rest) => format!(r"{windows}\{rest}"),
+        None if !text.contains('\\') && !text.starts_with('%') => {
+            format!(r"{windows}\System32\{text}")
+        }
+        None if text.as_bytes().get(1) != Some(&b':') && !text.starts_with(['%', '"', '\\']) => {
+            format!(r"{windows}\{text}")
+        }
+        None => text.to_owned(),
+    };
+    while text.contains(r"\\") {
+        text = text.replace(r"\\", r"\");
+    }
+    let expanded = expand(&text, drive, None);
+    if let Some(program) = program(&expanded) {
+        return Some(program.to_owned());
+    }
+    // Drivers and DLLs: up to their extension, spaces and all.
+    let lower = expanded.to_ascii_lowercase();
+    let end = [".sys", ".dll"]
+        .iter()
+        .filter_map(|extension| lower.find(extension).map(|at| at + extension.len()))
+        .min()?;
+    Some(expanded[..end].trim_start_matches('"').to_owned())
+}
+
+fn strip_prefix_ignore_case<'t>(text: &'t str, prefix: &str) -> Option<&'t str> {
+    let head = text.get(..prefix.len())?;
+    head.eq_ignore_ascii_case(prefix)
+        .then(|| &text[prefix.len()..])
 }
 
 /// The programs Windows recorded as run (each Prefetch file's executable,
@@ -244,6 +333,50 @@ mod tests {
             r"C:\Users\alice\AppData\Roaming\u.exe"
         );
         assert_eq!(expand(r"%AppData%\u.exe", 'C', None), r"%AppData%\u.exe");
+    }
+
+    #[test]
+    fn service_binaries_in_every_spelling() {
+        let cases = [
+            (
+                r"\SystemRoot\System32\drivers\acpi.sys",
+                r"C:\Windows\System32\drivers\acpi.sys",
+            ),
+            (
+                r"System32\drivers\evil.sys",
+                r"C:\Windows\System32\drivers\evil.sys",
+            ),
+            (r"\??\C:\ProgramData\x\drv.sys", r"C:\ProgramData\x\drv.sys"),
+            (
+                r"%SystemRoot%\System32\svchost.exe -k netsvcs -p",
+                r"C:\Windows\System32\svchost.exe",
+            ),
+            (
+                r"%SystemRoot%\System32\updsvc.dll",
+                r"C:\Windows\System32\updsvc.dll",
+            ),
+            (
+                r#""C:\Program Files\Agent\agent.exe" --service"#,
+                r"C:\Program Files\Agent\agent.exe",
+            ),
+            (
+                r"C:\Users\Public\svc host.exe /run",
+                r"C:\Users\Public\svc host.exe",
+            ),
+            ("winhttp.dll", r"C:\Windows\System32\winhttp.dll"),
+            (
+                r"C:\Program Files\Av\\shield.exe",
+                r"C:\Program Files\Av\shield.exe",
+            ),
+        ];
+        for (image_path, expected) in cases {
+            assert_eq!(
+                service_binary(image_path, 'C').as_deref(),
+                Some(expected),
+                "{image_path}"
+            );
+        }
+        assert_eq!(service_binary("", 'C'), None);
     }
 
     #[test]

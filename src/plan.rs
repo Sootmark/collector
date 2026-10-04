@@ -67,7 +67,7 @@ pub enum What {
     Follow {
         /// Where they are named: earlier command rules (`processes`,
         /// `services`), or the volume's scheduled tasks and Run keys
-        /// (`scheduled-tasks`, `run-keys`).
+        /// (`scheduled-tasks`, `run-keys`, `service-keys`, `prefetch`).
         from: Vec<String>,
         /// Paths not collected (`\Windows\**`).
         exclude: Vec<Pattern>,
