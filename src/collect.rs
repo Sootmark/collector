@@ -254,11 +254,22 @@ impl<W: Write> Run<'_, W> {
             .filter(|f| f.stream.is_none())
             .map(|f| (lowered(&f.path), f))
             .collect();
-        for path in named
-            .iter()
-            .filter(|p| !exclude.iter().any(|e| e.matches(p, None)))
-        {
-            match by_path.get(&lowered(path)) {
+        for named_path in &named {
+            // Some processes report 8.3 short paths: matched by their long
+            // names.
+            let path = if named_path.iter().any(|part| part.contains('~')) {
+                self.volume
+                    .long_path(named_path)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| named_path.clone())
+            } else {
+                named_path.clone()
+            };
+            if exclude.iter().any(|e| e.matches(&path, None)) {
+                continue;
+            }
+            match by_path.get(&lowered(&path)) {
                 Some(file) => self.take(rule, file, how),
                 None => self.manifest.push(Json::object([
                     ("rule", Json::from(rule.id.as_str())),
