@@ -243,6 +243,14 @@
       ]
     },
     {
+      "id": "recycle-bin",
+      "title": "Recycle Bin index files: each deleted file's original path, size and deletion time",
+      "paths": [
+        "\\$Recycle.Bin\\*\\$I*",
+        "\\RECYCLER\\*\\INFO2"
+      ]
+    },
+    {
       "id": "startup",
       "title": "Startup folders",
       "paths": [
