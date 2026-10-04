@@ -101,7 +101,8 @@
       "exclude": [
         "\\Windows\\**",
         "\\Program Files\\**",
-        "\\Program Files (x86)\\**"
+        "\\Program Files (x86)\\**",
+        "\\ProgramData\\Microsoft\\Windows Defender\\**"
       ],
       "max_bytes": 67108864
     },
