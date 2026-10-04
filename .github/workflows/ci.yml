@@ -42,7 +42,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Test
         run: cargo test --locked
-      - name: Collect from C:
+      - name: "Collect from C:"
         shell: pwsh
         run: |
           cargo run --release --locked -- collect --output "$env:RUNNER_TEMP\triage.zip" --deadline 10
