@@ -1,0 +1,164 @@
+//! A collection from the synthetic FIN-WKS-07 disk (made by
+//! `sootmark-disk`'s `make-samples.py`; `tests/fixtures/`): files read raw
+//! into the archive with their hashes, a stream stored apart, rules that
+//! found nothing listed, and the run recorded.
+
+use std::io::{Cursor, Read};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use collector::{collect, Options, Plan, Volume, DEFAULT_PLAN, MANIFEST, OUTCOME};
+use common::json::{self, Json};
+
+/// `icat -o 256 fin-wks-07.img 34 | shasum -a 256`
+const RCLONE_CONF_SHA256: &str = "8c4dc8c2ac27226bb585cff90ecec13394bd51e792296d1333ef178df5a2f57f";
+
+fn image() -> PathBuf {
+    // One file per call: tests run at once.
+    static IMAGES: AtomicUsize = AtomicUsize::new(0);
+    let compressed = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/fin-wks-07.img.zlib"
+    ))
+    .unwrap();
+    let n = IMAGES.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "collector-fin-wks-07-{}-{n}.img",
+        std::process::id()
+    ));
+    std::fs::write(
+        &path,
+        common::deflate::zlib_decompress(&compressed, 16 << 20).unwrap(),
+    )
+    .unwrap();
+    path
+}
+
+fn run(plan: &str) -> (zip::Archive<Cursor<Vec<u8>>>, collector::Summary) {
+    let path = image();
+    let mut volume = Volume::open_image(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let options = Options {
+        drive: 'C',
+        host: "FIN-WKS-07".to_owned(),
+        deadline: None,
+    };
+    let (out, summary) = collect(
+        &mut volume,
+        &Plan::parse(plan).unwrap(),
+        &options,
+        Vec::new(),
+    )
+    .unwrap();
+    (zip::Archive::open(Cursor::new(out)).unwrap(), summary)
+}
+
+fn content(archive: &mut zip::Archive<Cursor<Vec<u8>>>, name: &str) -> Vec<u8> {
+    let index = archive
+        .entries()
+        .iter()
+        .position(|e| e.name == name)
+        .unwrap_or_else(|| panic!("{name} not in the archive"));
+    let mut bytes = Vec::new();
+    archive
+        .reader(index)
+        .unwrap()
+        .read_to_end(&mut bytes)
+        .unwrap();
+    bytes
+}
+
+fn manifest(archive: &mut zip::Archive<Cursor<Vec<u8>>>) -> Vec<Json> {
+    String::from_utf8(content(archive, MANIFEST))
+        .unwrap()
+        .lines()
+        .map(|line| json::parse(line).unwrap())
+        .collect()
+}
+
+fn text<'j>(line: &'j Json, name: &str) -> Option<&'j str> {
+    line.get(name).and_then(Json::as_str)
+}
+
+#[test]
+fn the_default_plan_collects_what_the_volume_has() {
+    let (mut archive, summary) = run(DEFAULT_PLAN);
+    assert_eq!(summary.errors, 0);
+    let lines = manifest(&mut archive);
+    let mft = lines
+        .iter()
+        .find(|l| text(l, "rule") == Some("mft"))
+        .unwrap();
+    assert_eq!(text(mft, "status"), Some("ok"));
+    assert_eq!(text(mft, "stored"), Some("C/$MFT"));
+    assert_eq!(text(mft, "method"), Some("raw-ntfs"));
+    assert!(!content(&mut archive, "C/$MFT").is_empty());
+    let history = "C/Users/svc_backup/AppData/Roaming/Microsoft/Windows/PowerShell/PSReadLine/ConsoleHost_history.txt";
+    assert!(!content(&mut archive, history).is_empty());
+    // No Windows folder on this volume: every such rule says so.
+    let evtx = lines
+        .iter()
+        .find(|l| text(l, "rule") == Some("evtx"))
+        .unwrap();
+    assert_eq!(text(evtx, "status"), Some("not_found"));
+    let outcome =
+        json::parse(std::str::from_utf8(&content(&mut archive, OUTCOME)).unwrap()).unwrap();
+    assert_eq!(
+        outcome.get("host").and_then(Json::as_str),
+        Some("FIN-WKS-07")
+    );
+    assert_eq!(
+        outcome.get("collected").and_then(Json::as_u64),
+        Some(summary.collected)
+    );
+}
+
+#[test]
+fn files_streams_hashes_and_limits() {
+    let plan = r#"{ "name": "test", "rules": [
+        { "id": "rclone", "paths": ["\\Users\\*\\AppData\\Roaming\\rclone\\rclone.conf"] },
+        { "id": "zone", "paths": ["\\Users\\*\\Downloads\\*:Zone.Identifier"] },
+        { "id": "cut", "paths": ["\\ProgramData\\Intel\\m64.exe"], "max_bytes": 1000 },
+        { "id": "again", "paths": ["\\Users\\**\\rclone.conf"] },
+        { "id": "nothing", "paths": ["\\nowhere\\*"] } ] }"#;
+    let (mut archive, summary) = run(plan);
+    let lines = manifest(&mut archive);
+    let by_rule = |id: &str| {
+        lines
+            .iter()
+            .filter(|l| text(l, "rule") == Some(id))
+            .collect::<Vec<_>>()
+    };
+    let rclone = by_rule("rclone")[0];
+    assert_eq!(text(rclone, "sha256"), Some(RCLONE_CONF_SHA256));
+    assert_eq!(
+        text(rclone, "path"),
+        Some(r"C:\Users\svc_backup\AppData\Roaming\rclone\rclone.conf")
+    );
+    assert!(text(rclone, "modified").is_some());
+    let zone = by_rule("zone")[0];
+    assert_eq!(
+        text(zone, "stored"),
+        Some("C/Users/svc_backup/Downloads/tools.zip%3AZone.Identifier")
+    );
+    assert!(content(
+        &mut archive,
+        "C/Users/svc_backup/Downloads/tools.zip%3AZone.Identifier"
+    )
+    .starts_with(b"[ZoneTransfer]"));
+    let cut = by_rule("cut")[0];
+    assert_eq!(text(cut, "status"), Some("partial"));
+    assert_eq!(
+        cut.get("collected_bytes").and_then(Json::as_u64),
+        Some(1000)
+    );
+    assert!(
+        by_rule("again").is_empty(),
+        "collected once, by the first rule"
+    );
+    assert_eq!(text(by_rule("nothing")[0], "status"), Some("not_found"));
+    assert_eq!(
+        (summary.collected, summary.partial, summary.not_found),
+        (2, 1, 1)
+    );
+}

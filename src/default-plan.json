@@ -1,0 +1,59 @@
+{
+  "name": "windows-triage",
+  "rules": [
+    { "id": "mft", "title": "Master File Table", "paths": ["\\$MFT"] },
+    { "id": "logfile", "title": "NTFS transaction log", "paths": ["\\$LogFile"] },
+    { "id": "usn", "title": "USN change journal", "paths": ["\\$Extend\\$UsnJrnl:$J"] },
+    {
+      "id": "hives",
+      "title": "System registry hives and their transaction logs",
+      "paths": [
+        "\\Windows\\System32\\config\\SAM*",
+        "\\Windows\\System32\\config\\SECURITY*",
+        "\\Windows\\System32\\config\\SOFTWARE*",
+        "\\Windows\\System32\\config\\SYSTEM*",
+        "\\Windows\\System32\\config\\DEFAULT*"
+      ]
+    },
+    {
+      "id": "user-hives",
+      "title": "User registry hives and their transaction logs",
+      "paths": [
+        "\\Users\\*\\NTUSER.DAT*",
+        "\\Users\\*\\AppData\\Local\\Microsoft\\Windows\\UsrClass.dat*"
+      ]
+    },
+    { "id": "amcache", "title": "Amcache", "paths": ["\\Windows\\AppCompat\\Programs\\Amcache.hve*"] },
+    { "id": "evtx", "title": "Event logs", "paths": ["\\Windows\\System32\\winevt\\Logs\\*.evtx"] },
+    { "id": "prefetch", "title": "Prefetch", "paths": ["\\Windows\\Prefetch\\*.pf"] },
+    { "id": "srum", "title": "SRUM database", "paths": ["\\Windows\\System32\\sru\\SRUDB.dat"] },
+    { "id": "tasks", "title": "Scheduled tasks", "paths": ["\\Windows\\System32\\Tasks\\**"] },
+    {
+      "id": "recent",
+      "title": "LNK files and jump lists",
+      "paths": [
+        "\\Users\\*\\AppData\\Roaming\\Microsoft\\Windows\\Recent\\**",
+        "\\Users\\*\\Desktop\\*.lnk"
+      ]
+    },
+    {
+      "id": "powershell",
+      "title": "PowerShell history",
+      "paths": ["\\Users\\*\\AppData\\Roaming\\Microsoft\\Windows\\PowerShell\\PSReadLine\\*.txt"]
+    },
+    {
+      "id": "startup",
+      "title": "Startup folders",
+      "paths": [
+        "\\Users\\*\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\**",
+        "\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\StartUp\\**"
+      ]
+    },
+    {
+      "id": "wmi",
+      "title": "WMI repository",
+      "paths": ["\\Windows\\System32\\wbem\\Repository\\**"],
+      "max_bytes": 1073741824
+    }
+  ]
+}

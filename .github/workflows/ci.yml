@@ -1,0 +1,72 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --check
+      - name: Lint
+        run: cargo clippy --all-targets --locked
+      - name: Test
+        run: cargo test --locked
+      - name: Docs
+        run: cargo doc --no-deps --locked
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  # The collector on a real Windows volume: the runner's C:, read raw
+  # (runners have administrator rights), into an archive on D:.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.1
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: cargo test --locked
+      - name: Collect from C:
+        shell: pwsh
+        run: |
+          cargo run --release --locked -- collect --output "$env:RUNNER_TEMP\triage.zip" --deadline 10
+          $check = @'
+          import json, sys, zipfile
+          archive = zipfile.ZipFile(sys.argv[1])
+          assert archive.testzip() is None, "a damaged entry"
+          names = set(archive.namelist())
+          lines = [json.loads(l) for l in archive.read("manifest.jsonl").decode().splitlines()]
+          status = {}
+          for line in lines:
+              status.setdefault(line["rule"], set()).add(line["status"])
+          print(json.dumps({k: sorted(v) for k, v in status.items()}, indent=1))
+          for rule in ("mft", "hives", "evtx", "usn"):
+              assert "ok" in status.get(rule, ()), f"{rule}: {status.get(rule)}"
+          assert "C/$MFT" in names and "C/$Extend/$J" in names
+          assert "C/Windows/System32/config/SYSTEM" in names
+          print(json.loads(archive.read("outcome.json")))
+          '@
+          $check | python - "$env:RUNNER_TEMP\triage.zip"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
