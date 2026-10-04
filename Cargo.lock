@@ -764,6 +764,7 @@ dependencies = [
  "sootmark-age",
  "sootmark-common",
  "sootmark-disk",
+ "sootmark-registry",
  "sootmark-zip",
  "windows-sys",
 ]
@@ -782,6 +783,21 @@ checksum = "3470d5966562c7725d57625cf87be052dfbe1fe0c50e1304ec259227cf3099cf"
 dependencies = [
  "sootmark-common",
 ]
+
+[[package]]
+name = "sootmark-registry"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9f39c8ee1a1e216a06b1063242301c12056b378ee994dcf44acda2ff483ccc3"
+dependencies = [
+ "sootmark-shell",
+]
+
+[[package]]
+name = "sootmark-shell"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "727dfc198e8216a4ad5f0fa5bef028f59148999782fc0c5f7c1056b6924759f7"
 
 [[package]]
 name = "sootmark-zip"

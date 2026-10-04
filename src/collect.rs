@@ -15,6 +15,7 @@ use common::sha256::{hex, Sha256};
 use common::time::Ts;
 use disk::{FileEntry, Times};
 
+use crate::artifacts;
 use crate::command::{self, Ran};
 use crate::follow;
 use crate::limits::{Applied, Limits};
@@ -231,18 +232,20 @@ impl<W: Write> Run<'_, W> {
         files: &[FileEntry],
         how: Copying,
     ) {
-        let named: BTreeSet<Vec<String>> = from
+        let drive = self.options.drive;
+        let mut paths = Vec::new();
+        for source in from {
+            match self.outputs.get(source) {
+                Some(output) => paths.extend(follow::named(output)),
+                None => paths.extend(artifacts::named(source, self.volume, files, drive)),
+            }
+        }
+        let named: BTreeSet<Vec<String>> = paths
             .iter()
-            .filter_map(|id| self.outputs.get(id))
-            .flat_map(|output| follow::named(output))
-            .filter_map(|path| follow::on_volume(&path, self.options.drive))
+            .filter_map(|path| follow::on_volume(path, drive))
             .collect();
         if named.is_empty() {
-            let why = if self.options.live {
-                "the outputs it follows name no executable on this volume"
-            } else {
-                "not a live collection: nothing to follow"
-            };
+            let why = "what it follows names no executable on this volume";
             self.manifest.push(Json::object([
                 ("rule", Json::from(rule.id.as_str())),
                 ("status", Json::from("not_found")),
@@ -278,10 +281,7 @@ impl<W: Write> Run<'_, W> {
                         ),
                     ),
                     ("status", Json::from("not_found")),
-                    (
-                        "why",
-                        Json::from("named by a live output, not on the volume"),
-                    ),
+                    ("why", Json::from("named, but not on the volume")),
                 ])),
             }
         }

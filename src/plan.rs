@@ -19,6 +19,7 @@
 use common::json::{self, Json};
 use common::sha256::{hex, Sha256};
 
+use crate::artifacts::SOURCES;
 use crate::pattern::Pattern;
 
 /// The plan the collector runs without `--plan`: a Windows triage.
@@ -64,8 +65,9 @@ pub enum What {
     /// images, services' binaries), outside `exclude`: what an implant
     /// runs from, collected without being named in advance.
     Follow {
-        /// The command rules whose outputs name them (`processes`,
-        /// `services`), earlier in the plan.
+        /// Where they are named: earlier command rules (`processes`,
+        /// `services`), or the volume's scheduled tasks and Run keys
+        /// (`scheduled-tasks`, `run-keys`).
         from: Vec<String>,
         /// Paths not collected (`\Windows\**`).
         exclude: Vec<Pattern>,
@@ -176,10 +178,12 @@ fn follow(id: &str, rule: &Json, from: &Json, earlier: &[Rule]) -> Result<What, 
         .filter(|r| matches!(r.what, What::Command { .. }))
         .map(|r| r.id.as_str())
         .collect();
-    if from.is_empty() || from.iter().any(|f| !commands.contains(&f.as_str())) {
+    let known = |f: &String| commands.contains(&f.as_str()) || SOURCES.contains(&f.as_str());
+    if from.is_empty() || !from.iter().all(known) {
         return Err(PlanError(format!(
-            "{id}: follow names earlier command rules (here: {})",
-            commands.join(", ")
+            "{id}: follow names earlier command rules (here: {}) or {}",
+            commands.join(", "),
+            SOURCES.join(", ")
         )));
     }
     let exclude = rule

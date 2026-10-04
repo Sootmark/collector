@@ -8,6 +8,7 @@
 //! `manifest.jsonl`: collected, cut, unreadable, skipped at the deadline,
 //! or not found. Nothing is written to the collected volume.
 
+mod artifacts;
 mod collect;
 mod command;
 mod follow;

@@ -316,3 +316,51 @@ fn executables_named_by_live_outputs_are_collected() {
     assert_eq!(text(binaries[1], "status"), Some("not_found"));
     assert!(!content(&mut archive, "C/ProgramData/Intel/m64.exe").is_empty());
 }
+
+/// A follow rule on the volume's scheduled tasks: a task's program is
+/// collected (from an image or a folder too: no live host needed).
+#[test]
+fn programs_scheduled_tasks_run_are_collected() {
+    let root = std::env::temp_dir().join(format!("collector-tasks-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("Windows/System32/Tasks/Microsoft")).unwrap();
+    std::fs::create_dir_all(root.join("ProgramData/Updater")).unwrap();
+    let xml = "<?xml version=\"1.0\" encoding=\"UTF-16\"?><Task><Actions><Exec><Command>%ProgramData%\\Updater\\update.exe</Command><Arguments>-q</Arguments></Exec></Actions></Task>";
+    let utf16: Vec<u8> = [0xff, 0xfe]
+        .into_iter()
+        .chain(xml.encode_utf16().flat_map(u16::to_le_bytes))
+        .collect();
+    std::fs::write(root.join("Windows/System32/Tasks/Updater"), utf16).unwrap();
+    std::fs::write(
+        root.join("Windows/System32/Tasks/Microsoft/Defrag"),
+        "<Task><Exec><Command>%windir%\\system32\\defrag.exe</Command></Exec></Task>",
+    )
+    .unwrap();
+    std::fs::write(root.join("ProgramData/Updater/update.exe"), b"MZ").unwrap();
+    let mut volume = Volume::open_directory(&root).unwrap();
+    let options = Options {
+        drive: 'C',
+        host: "WS-042".to_owned(),
+        deadline: None,
+        job: None,
+        recipients: Vec::new(),
+        live: false,
+        limits: None,
+    };
+    let plan = r#"{ "name": "p", "rules": [
+        { "id": "persistence", "follow": ["scheduled-tasks", "run-keys"], "exclude": ["\\Windows\\**"] } ] }"#;
+    let (out, summary) = collect(
+        &mut volume,
+        &Plan::parse(plan).unwrap(),
+        &options,
+        Vec::new(),
+    )
+    .unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+    assert_eq!(summary.collected, 1);
+    let mut archive = zip::Archive::open(Cursor::new(out)).unwrap();
+    assert_eq!(
+        content(&mut archive, "C/ProgramData/Updater/update.exe"),
+        b"MZ"
+    );
+}

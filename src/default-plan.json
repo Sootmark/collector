@@ -107,6 +107,21 @@
       "max_bytes": 67108864
     },
     {
+      "id": "persistence-binaries",
+      "title": "Programs scheduled tasks and Run keys start, outside Windows and Program Files",
+      "follow": [
+        "scheduled-tasks",
+        "run-keys"
+      ],
+      "exclude": [
+        "\\Windows\\**",
+        "\\Program Files\\**",
+        "\\Program Files (x86)\\**",
+        "\\ProgramData\\Microsoft\\Windows Defender\\**"
+      ],
+      "max_bytes": 67108864
+    },
+    {
       "id": "mft",
       "title": "Master File Table",
       "paths": [

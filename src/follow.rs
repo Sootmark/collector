@@ -1,6 +1,7 @@
 //! What a follow rule collects: the executables the live outputs name, the
 //! running processes' images (`ExecutablePath`) and the services' binaries
-//! (the program in `PathName`), as paths on the collected volume.
+//! (the program in `PathName`), as paths on the collected volume. The
+//! volume's own sources are in `artifacts`.
 
 use common::json::{self, Json};
 
@@ -29,16 +30,24 @@ pub(crate) fn named(output: &[u8]) -> Vec<String> {
         .collect()
 }
 
-/// The program a command line runs: quoted (`"C:\a b\x.exe" -k`), or up to
-/// its `.exe` (`C:\a b\x.exe -k`, spaces and all).
-fn program(command_line: &str) -> Option<&str> {
+/// What a command line runs: its quoted program (`"C:\a b\x.exe" -k`),
+/// or up to the first program or script extension (`C:\a b\x.exe -k`,
+/// spaces and all; `C:\x\run.ps1`).
+pub(crate) fn program(command_line: &str) -> Option<&str> {
     let line = command_line.trim();
     if let Some(quoted) = line.strip_prefix('"') {
         return quoted.split('"').next().filter(|p| !p.is_empty());
     }
-    let end = line.to_ascii_lowercase().find(".exe")? + 4;
+    let lower = line.to_ascii_lowercase();
+    let end = PROGRAMS
+        .iter()
+        .filter_map(|extension| lower.find(extension).map(|at| at + extension.len()))
+        .min()?;
     Some(&line[..end])
 }
+
+/// What a command line may run directly: programs and scripts.
+const PROGRAMS: [&str; 7] = [".exe", ".bat", ".cmd", ".ps1", ".vbs", ".js", ".hta"];
 
 /// `path`'s components on the volume at `drive`, when it is on it:
 /// `C:\Users\a.exe` → `["Users", "a.exe"]`. `\??\` and `%SystemRoot%`
