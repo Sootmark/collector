@@ -8,7 +8,7 @@
 //!     { "id": "evtx", "title": "Event logs",
 //!       "paths": ["\\Windows\\System32\\winevt\\Logs\\*.evtx"] },
 //!     { "id": "usn", "title": "USN journal",
-//!       "paths": ["\\$Extend\\$UsnJrnl:$J"], "max_bytes": 4294967296 } ] }
+//!       "paths": ["\\$Extend\\$UsnJrnl:$J"], "skip_leading_zeros": true } ] }
 //! ```
 
 use common::json::{self, Json};
@@ -42,6 +42,9 @@ pub struct Rule {
     /// Most bytes kept of each file: the rest is cut, and the file marked
     /// partial. `None`: whole files.
     pub max_bytes: Option<u64>,
+    /// Drop the whole zero pages a file starts with (a USN journal's
+    /// freed start), recording how many: the stored copy starts there.
+    pub skip_leading_zeros: bool,
 }
 
 /// Why a plan was refused.
@@ -90,6 +93,7 @@ impl Plan {
                 id,
                 paths,
                 max_bytes: rule.get("max_bytes").and_then(Json::as_u64),
+                skip_leading_zeros: rule.get("skip_leading_zeros") == Some(&Json::Bool(true)),
             });
         }
         if rules.is_empty() {

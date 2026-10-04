@@ -3,7 +3,12 @@
   "rules": [
     { "id": "mft", "title": "Master File Table", "paths": ["\\$MFT"] },
     { "id": "logfile", "title": "NTFS transaction log", "paths": ["\\$LogFile"] },
-    { "id": "usn", "title": "USN change journal", "paths": ["\\$Extend\\$UsnJrnl:$J"] },
+    {
+      "id": "usn",
+      "title": "USN change journal (its freed, zeroed start skipped)",
+      "paths": ["\\$Extend\\$UsnJrnl:$J"],
+      "skip_leading_zeros": true
+    },
     {
       "id": "hives",
       "title": "System registry hives and their transaction logs",

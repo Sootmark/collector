@@ -139,10 +139,14 @@ fn copy<W: Write>(
     // What reached the archive: its size and hash, and the read error
     // that cut it short, if any.
     let mut written: Option<(u64, [u8; 32], Option<String>)> = None;
+    let mut skipped = 0;
     let read = volume.read(file, &mut |content| {
-        let mut hashing = Hashing::new(content.take(limit));
+        let limited = content.take(limit);
+        let mut zeros = SkipZeros::new(limited, rule.skip_leading_zeros);
+        let mut hashing = Hashing::new(&mut zeros);
         let added = archive.add(&name, file.times.modified, &mut hashing);
         let sha256 = hashing.finish();
+        skipped = zeros.skipped;
         match added {
             Ok(entry) => written = Some((entry.size, sha256, None)),
             Err(error) => match zip::write::Truncated::of(&error) {
@@ -156,7 +160,8 @@ fn copy<W: Write>(
     });
     match (read, written) {
         (Ok(()), Some((size, sha256, read_error))) => {
-            let cut = read_error.is_none() && file.size > size && size == limit;
+            let read_bytes = skipped + size;
+            let cut = read_error.is_none() && file.size > read_bytes && read_bytes == limit;
             summary.bytes += size;
             let why = match (&read_error, cut) {
                 (Some(error), _) => Some(format!("read stopped: {error}")),
@@ -172,6 +177,10 @@ fn copy<W: Write>(
             };
             let mut line = listing(rule, file, drive, status, Some(&name), why.as_deref());
             push(&mut line, "collected_bytes", Json::from(size));
+            if skipped > 0 {
+                // The stored copy starts this far into the file.
+                push(&mut line, "skipped_leading_zeros", Json::from(skipped));
+            }
             push(&mut line, "sha256", Json::from(hex(&sha256).as_str()));
             line
         }
@@ -295,6 +304,71 @@ fn now() -> Ts {
     Ts::from_unix_micros(i64::try_from(micros).unwrap_or(i64::MAX))
 }
 
+/// Pages a file's leading zeros are skipped in: a USN journal's freed
+/// pages are whole 4 KiB pages.
+const PAGE: usize = 4096;
+
+/// A reader that, when asked, drops the whole zero pages its content
+/// starts with (a USN journal's freed, sparse start: often gigabytes),
+/// counting them.
+struct SkipZeros<R> {
+    inner: R,
+    /// Still looking for the first page that isn't zeros.
+    skipping: bool,
+    /// Bytes dropped.
+    skipped: u64,
+    /// The first page with data, not yet handed on.
+    pending: Vec<u8>,
+}
+
+impl<R: Read> SkipZeros<R> {
+    fn new(inner: R, skip: bool) -> Self {
+        Self {
+            inner,
+            skipping: skip,
+            skipped: 0,
+            pending: Vec::new(),
+        }
+    }
+
+    /// Drop zero pages up to the first that holds data, kept in `pending`.
+    fn skip(&mut self) -> io::Result<()> {
+        let mut page = vec![0; PAGE];
+        while self.skipping {
+            let mut filled = 0;
+            while filled < PAGE {
+                match self.inner.read(&mut page[filled..]) {
+                    Ok(0) => break,
+                    Ok(n) => filled += n,
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                    Err(e) => return Err(e),
+                }
+            }
+            let page = &page[..filled];
+            if filled == PAGE && page.iter().all(|&b| b == 0) {
+                self.skipped += PAGE as u64;
+                continue;
+            }
+            self.pending = page.to_vec();
+            self.skipping = false;
+        }
+        Ok(())
+    }
+}
+
+impl<R: Read> Read for SkipZeros<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.skip()?;
+        if self.pending.is_empty() {
+            return self.inner.read(buf);
+        }
+        let n = buf.len().min(self.pending.len());
+        buf[..n].copy_from_slice(&self.pending[..n]);
+        self.pending.drain(..n);
+        Ok(n)
+    }
+}
+
 /// A reader that hashes what passes through it.
 struct Hashing<R> {
     inner: R,
@@ -319,5 +393,40 @@ impl<R: Read> Read for Hashing<R> {
         let n = self.inner.read(buf)?;
         self.hasher.update(&buf[..n]);
         Ok(n)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn through(content: &[u8], skip: bool) -> (Vec<u8>, u64) {
+        let mut reader = SkipZeros::new(content, skip);
+        let mut out = Vec::new();
+        reader.read_to_end(&mut out).unwrap();
+        (out, reader.skipped)
+    }
+
+    #[test]
+    fn leading_zero_pages_are_dropped_and_counted() {
+        let mut journal = vec![0; 3 * PAGE];
+        journal.extend_from_slice(&[0, 0, 7, 8]);
+        journal.extend(std::iter::repeat(0).take(PAGE));
+        let (out, skipped) = through(&journal, true);
+        assert_eq!(skipped, 3 * PAGE as u64);
+        assert_eq!(
+            out,
+            &journal[3 * PAGE..],
+            "zeros after the first data are kept"
+        );
+    }
+
+    #[test]
+    fn only_when_asked_and_only_whole_pages() {
+        let journal = vec![0; 2 * PAGE + 10];
+        assert_eq!(through(&journal, false), (journal.clone(), 0));
+        let (out, skipped) = through(&journal, true);
+        assert_eq!((out.len(), skipped), (10, 2 * PAGE as u64));
+        assert_eq!(through(&[], true), (Vec::new(), 0));
     }
 }

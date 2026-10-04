@@ -60,6 +60,7 @@ jobs:
               assert "ok" in status.get(rule, ()), f"{rule}: {status.get(rule)}"
           assert "C/$MFT" in names and "C/$Extend/$J" in names
           assert "C/Windows/System32/config/SYSTEM" in names
+          print([l for l in lines if l["rule"] == "usn"])
           print(json.loads(archive.read("outcome.json")))
           '@
           $check | python - "$env:RUNNER_TEMP\triage.zip"
