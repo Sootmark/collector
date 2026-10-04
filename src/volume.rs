@@ -5,14 +5,13 @@
 //! walked through the operating system's file API, which can't read files
 //! held open, and says so for each.
 
-use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use common::time::Ts;
-use disk::{identify, partitions, FileEntry, Filesystem, Mft, NtfsVolume, Times, SECTOR_SIZE};
+use disk::{identify, partitions, FileEntry, Filesystem, NtfsVolume, Times, SECTOR_SIZE};
 
 /// Bytes a raw device is read in: whole sectors, and enough to make
 /// sequential reads cheap.
@@ -34,11 +33,10 @@ pub struct Volume {
 
 /// How a volume's files are read.
 enum Reader {
-    /// NTFS, raw; its names, 8.3 aliases included, once asked for.
+    /// NTFS, raw.
     Raw {
         disk: Box<dyn Disk>,
-        ntfs: Box<NtfsVolume>,
-        names: Option<Names>,
+        ntfs: NtfsVolume,
     },
     /// A mounted volume, through the file API.
     Directory { root: PathBuf },
@@ -59,8 +57,7 @@ impl Volume {
         Ok(Self {
             reader: Reader::Raw {
                 disk: Box::new(device),
-                ntfs: Box::new(ntfs),
-                names: None,
+                ntfs,
             },
             source: path.to_owned(),
         })
@@ -94,8 +91,7 @@ impl Volume {
         Ok(Self {
             reader: Reader::Raw {
                 disk: Box::new(file),
-                ntfs: Box::new(ntfs),
-                names: None,
+                ntfs,
             },
             source: path.display().to_string(),
         })
@@ -133,7 +129,7 @@ impl Volume {
     /// When the MFT can't be read.
     pub fn files(&mut self) -> io::Result<Vec<FileEntry>> {
         match &mut self.reader {
-            Reader::Raw { disk, ntfs, .. } => ntfs.files(disk),
+            Reader::Raw { disk, ntfs } => ntfs.files(disk),
             Reader::Directory { root } => {
                 let mut files = Vec::new();
                 walk(root, &mut Vec::new(), &mut files);
@@ -152,7 +148,7 @@ impl Volume {
         consume: &mut dyn FnMut(&mut dyn Read) -> io::Result<()>,
     ) -> io::Result<()> {
         match &mut self.reader {
-            Reader::Raw { disk, ntfs, .. } => ntfs.read(disk, file, consume),
+            Reader::Raw { disk, ntfs } => ntfs.read(disk, file, consume),
             Reader::Directory { root } => {
                 let path = file
                     .path
@@ -165,71 +161,23 @@ impl Volume {
 }
 
 impl Volume {
-    /// `path` with its 8.3 short components (`RUNNER~1`) as their long
-    /// names, as Windows reports some processes' images: the volume's own
-    /// names say which; `None` when a component names nothing.
-    ///
-    /// # Errors
-    /// When the volume's names can't be read.
-    pub fn long_path(&mut self, path: &[String]) -> io::Result<Option<Vec<String>>> {
-        match &mut self.reader {
-            Reader::Raw { disk, ntfs, names } => {
-                if names.is_none() {
-                    *names = Some(Names::of(&ntfs.mft(disk)?));
-                }
-                Ok(names.as_ref().and_then(|names| names.long_path(path)))
-            }
-            Reader::Directory { root } => {
-                let joined = path.iter().fold(root.clone(), |p, part| p.join(part));
-                let Ok(long) = fs::canonicalize(joined) else {
-                    return Ok(None);
-                };
-                let root = fs::canonicalize(&*root)?;
-                Ok(long.strip_prefix(root).ok().map(|rest| {
-                    rest.components()
-                        .map(|c| c.as_os_str().to_string_lossy().into_owned())
-                        .collect()
-                }))
-            }
-        }
-    }
-}
-
-/// An NTFS volume's names, by folder: every name of every file in use,
-/// long and 8.3, and each file's long path.
-struct Names {
-    /// (folder record, name lower-cased) → record.
-    children: HashMap<(u64, String), u64>,
-    /// Record → long path.
-    paths: HashMap<u64, Vec<String>>,
-}
-
-/// The root folder's MFT record.
-const ROOT: u64 = 5;
-
-impl Names {
-    fn of(mft: &Mft) -> Self {
-        let mut names = Self {
-            children: HashMap::new(),
-            paths: HashMap::new(),
+    /// `path` (on the volume at `drive`) with its 8.3 short components
+    /// (`RUNNER~1`) as their long names, as Windows reports some processes'
+    /// images: the running system expands them, so only on a live host;
+    /// `None` when it can't.
+    #[must_use]
+    pub fn long_path(&self, path: &[String], drive: char) -> Option<Vec<String>> {
+        let base = match &self.reader {
+            Reader::Raw { .. } => PathBuf::from(format!("{drive}:\\")),
+            Reader::Directory { root } => root.clone(),
         };
-        for file in mft.files.iter().filter(|f| f.in_use && !f.is_orphan()) {
-            for name in &file.names {
-                names
-                    .children
-                    .insert((name.parent, name.name.to_lowercase()), file.record);
-            }
-            names.paths.insert(file.record, file.path.clone());
-        }
-        names
-    }
-
-    fn long_path(&self, path: &[String]) -> Option<Vec<String>> {
-        let mut record = ROOT;
-        for part in path {
-            record = *self.children.get(&(record, part.to_lowercase()))?;
-        }
-        self.paths.get(&record).cloned()
+        let long = fs::canonicalize(path.iter().fold(base.clone(), |p, part| p.join(part))).ok()?;
+        let rest = long.strip_prefix(fs::canonicalize(base).ok()?).ok()?;
+        Some(
+            rest.components()
+                .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                .collect(),
+        )
     }
 }
 
@@ -374,68 +322,6 @@ impl<R: Read + Seek> Seek for Aligned<R> {
 mod tests {
     use super::*;
     use std::io::Cursor;
-
-    fn named(
-        record: u64,
-        parent: u64,
-        names: &[(&str, disk::Namespace)],
-        path: &[&str],
-    ) -> disk::MftFile {
-        disk::MftFile {
-            record,
-            sequence: 1,
-            in_use: true,
-            is_directory: false,
-            times: Times::default(),
-            names: names
-                .iter()
-                .map(|(name, namespace)| disk::FileName {
-                    name: (*name).to_owned(),
-                    namespace: *namespace,
-                    parent,
-                    parent_sequence: 1,
-                    times: Times::default(),
-                    allocated_size: 0,
-                    size: 0,
-                })
-                .collect(),
-            streams: Vec::new(),
-            path: path.iter().map(|p| (*p).to_owned()).collect(),
-        }
-    }
-
-    #[test]
-    fn short_names_resolve_to_long_paths() {
-        use disk::Namespace::{Dos, Win32, Win32AndDos};
-        let mft = Mft {
-            files: vec![
-                named(40, ROOT, &[("Users", Win32AndDos)], &["Users"]),
-                named(
-                    41,
-                    40,
-                    &[("runneradmin", Win32), ("RUNNER~1", Dos)],
-                    &["Users", "runneradmin"],
-                ),
-                named(
-                    42,
-                    41,
-                    &[("tool.exe", Win32AndDos)],
-                    &["Users", "runneradmin", "tool.exe"],
-                ),
-            ],
-            problems: Vec::new(),
-        };
-        let names = Names::of(&mft);
-        let path = |parts: &[&str]| parts.iter().map(|p| (*p).to_owned()).collect::<Vec<_>>();
-        assert_eq!(
-            names.long_path(&path(&["USERS", "runner~1", "tool.exe"])),
-            Some(path(&["Users", "runneradmin", "tool.exe"]))
-        );
-        assert_eq!(
-            names.long_path(&path(&["Users", "OTHER~1", "tool.exe"])),
-            None
-        );
-    }
 
     /// A device that, like a Windows raw volume, refuses unaligned reads.
     struct Strict(Cursor<Vec<u8>>);

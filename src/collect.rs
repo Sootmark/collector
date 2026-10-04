@@ -259,9 +259,7 @@ impl<W: Write> Run<'_, W> {
             // names.
             let path = if named_path.iter().any(|part| part.contains('~')) {
                 self.volume
-                    .long_path(named_path)
-                    .ok()
-                    .flatten()
+                    .long_path(named_path, self.options.drive)
                     .unwrap_or_else(|| named_path.clone())
             } else {
                 named_path.clone()
