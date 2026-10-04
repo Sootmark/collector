@@ -16,6 +16,7 @@
 //! names, which the operator confirms by its fingerprint.
 
 use common::json::{self, Json};
+use common::sha256::Sha256;
 use common::time::Ts;
 use ed25519_dalek::{Signature, VerifyingKey};
 
@@ -33,7 +34,8 @@ pub struct Job {
     pub case: String,
     /// Who signed it.
     pub issuer: String,
-    /// Their key's fingerprint (16 hex digits), to confirm with them.
+    /// Their key's fingerprint (16 hex digits, the workbench's analyst id),
+    /// to confirm with them.
     pub fingerprint: String,
     /// Until when it may run.
     pub expires: Ts,
@@ -121,12 +123,18 @@ impl Job {
                 .and_then(Json::as_str)
                 .unwrap_or_default()
                 .to_owned(),
-            fingerprint: key_hex[..16].to_owned(),
+            fingerprint: fingerprint(key_hex),
             expires: Ts::from_unix_seconds(expires),
             recipients,
             plan: Plan::parse(&plan.to_string()).map_err(|e| JobError(format!("plan: {}", e.0)))?,
         })
     }
+}
+
+/// A key's fingerprint as the workbench shows an analyst's id: the first 8
+/// bytes of the SHA-256 of the key's hex, in hex.
+fn fingerprint(key_hex: &str) -> String {
+    common::hex::encode(&Sha256::digest(key_hex.to_ascii_lowercase().as_bytes())[..8])
 }
 
 /// Exactly `N` bytes from hex (either case).
