@@ -68,6 +68,8 @@ jobs:
               rows = json.loads(text) if text else []
               rows = rows if isinstance(rows, list) else [rows]
               print(rule, len(rows), rows[:1])
+          followed = [l for l in lines if l["rule"] == "running-binaries"]
+          print("running-binaries:", [(l["status"], l.get("path")) for l in followed][:10])
           outcome = json.loads(archive.read("outcome.json"))
           print(outcome)
           assert outcome["limits"]["applied"] == "yes", outcome["limits"]

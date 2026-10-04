@@ -6,7 +6,7 @@
 //! Every rule appears in the manifest: what it collected, or that it found
 //! nothing. A file two rules name is collected once, by the first.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::{self, Read, Write};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -16,7 +16,9 @@ use common::time::Ts;
 use disk::{FileEntry, Times};
 
 use crate::command::{self, Ran};
+use crate::follow;
 use crate::limits::{Applied, Limits};
+use crate::pattern::Pattern;
 use crate::plan::{Plan, Rule, What};
 use crate::volume::Volume;
 
@@ -90,102 +92,232 @@ pub fn collect<W: Write>(
 ) -> io::Result<(W, Summary)> {
     let started = now();
     let files = volume.files()?;
-    let mut archive = zip::Writer::new(out);
-    let mut manifest = Vec::new();
-    let mut summary = Summary::default();
-    let mut taken: HashSet<(Vec<String>, Option<String>)> = HashSet::new();
+    let mut run = Run {
+        volume,
+        options,
+        archive: zip::Writer::new(out),
+        manifest: Vec::new(),
+        summary: Summary::default(),
+        taken: HashSet::new(),
+        outputs: HashMap::new(),
+    };
     for rule in &plan.rules {
-        let late = options.deadline.is_some_and(|d| Instant::now() >= d);
         match &rule.what {
             What::Files {
                 paths,
                 max_bytes,
                 skip_leading_zeros,
             } => {
-                let mut matched: Vec<&FileEntry> = files
-                    .iter()
-                    .filter(|f| {
-                        paths
-                            .iter()
-                            .any(|p| p.matches(&f.path, f.stream.as_deref()))
-                    })
-                    .collect();
-                matched.sort_by_key(|f| f.display_path());
-                if matched.is_empty() {
-                    summary.not_found += 1;
-                    manifest.push(Json::object([
-                        ("rule", Json::from(rule.id.as_str())),
-                        ("status", Json::from("not_found")),
-                    ]));
-                }
-                for file in matched {
-                    if !taken.insert((file.path.clone(), file.stream.clone())) {
-                        continue;
-                    }
-                    let line = if options.deadline.is_some_and(|d| Instant::now() >= d) {
-                        summary.skipped += 1;
-                        listing(
-                            rule,
-                            file,
-                            options.drive,
-                            volume.method(),
-                            "skipped_limit",
-                            None,
-                            Some("deadline reached"),
-                        )
-                    } else {
-                        let how = Copying {
-                            limit: max_bytes.unwrap_or(u64::MAX),
-                            skip_zeros: *skip_leading_zeros,
-                        };
-                        copy(
-                            volume,
-                            &mut archive,
-                            rule,
-                            file,
-                            options.drive,
-                            how,
-                            &mut summary,
-                        )
-                    };
-                    manifest.push(line);
-                }
+                let how = Copying {
+                    limit: max_bytes.unwrap_or(u64::MAX),
+                    skip_zeros: *skip_leading_zeros,
+                };
+                run.files(rule, paths, &files, how);
             }
             What::Command {
                 argv,
                 output,
                 timeout_seconds,
+            } => run.command(rule, argv, output, Duration::from_secs(*timeout_seconds))?,
+            What::Follow {
+                from,
+                exclude,
+                max_bytes,
             } => {
-                let skipped = |why: &str| {
-                    Json::object([
-                        ("rule", Json::from(rule.id.as_str())),
-                        ("command", Json::from(argv.join(" ").as_str())),
-                        ("status", Json::from("skipped")),
-                        ("why", Json::from(why)),
-                    ])
+                let how = Copying {
+                    limit: max_bytes.unwrap_or(u64::MAX),
+                    skip_zeros: false,
                 };
-                let line = if !options.live {
-                    skipped("not a live collection: a command describes the running host")
-                } else if late {
-                    summary.skipped += 1;
-                    skipped("deadline reached")
-                } else {
-                    let ran = command::run(argv, Duration::from_secs(*timeout_seconds));
-                    store_output(&mut archive, rule, argv, output, &ran, &mut summary)?
-                };
-                manifest.push(line);
+                run.follow(rule, from, exclude, &files, how);
             }
         }
     }
     let mut lines = String::new();
-    for line in &manifest {
+    for line in &run.manifest {
         lines.push_str(&line.to_string());
         lines.push('\n');
     }
-    archive.add(MANIFEST, None, &mut lines.as_bytes())?;
-    let outcome = outcome(plan, options, volume, &summary, started);
-    archive.add(OUTCOME, None, &mut outcome.to_pretty().as_bytes())?;
-    Ok((archive.finish()?, summary))
+    run.archive.add(MANIFEST, None, &mut lines.as_bytes())?;
+    let outcome = outcome(plan, options, run.volume, &run.summary, started);
+    run.archive
+        .add(OUTCOME, None, &mut outcome.to_pretty().as_bytes())?;
+    Ok((run.archive.finish()?, run.summary))
+}
+
+/// A run in progress: the archive and manifest being written, and what
+/// was collected so far.
+struct Run<'r, W: Write> {
+    volume: &'r mut Volume,
+    options: &'r Options,
+    archive: zip::Writer<W>,
+    manifest: Vec<Json>,
+    summary: Summary,
+    /// Files collected already, by path and stream: each once.
+    taken: HashSet<(Vec<String>, Option<String>)>,
+    /// Command outputs, by rule, for follow rules.
+    outputs: HashMap<String, Vec<u8>>,
+}
+
+impl<W: Write> Run<'_, W> {
+    /// A files rule: every file its patterns match.
+    fn files(&mut self, rule: &Rule, paths: &[Pattern], files: &[FileEntry], how: Copying) {
+        let mut matched: Vec<&FileEntry> = files
+            .iter()
+            .filter(|f| {
+                paths
+                    .iter()
+                    .any(|p| p.matches(&f.path, f.stream.as_deref()))
+            })
+            .collect();
+        matched.sort_by_key(|f| f.display_path());
+        if matched.is_empty() {
+            self.summary.not_found += 1;
+            self.manifest.push(Json::object([
+                ("rule", Json::from(rule.id.as_str())),
+                ("status", Json::from("not_found")),
+            ]));
+        }
+        for file in matched {
+            self.take(rule, file, how);
+        }
+    }
+
+    /// A command rule: run on a live host, its output stored and kept for
+    /// follow rules.
+    fn command(
+        &mut self,
+        rule: &Rule,
+        argv: &[String],
+        output: &str,
+        timeout: Duration,
+    ) -> io::Result<()> {
+        let skipped = |why: &str| {
+            Json::object([
+                ("rule", Json::from(rule.id.as_str())),
+                ("command", Json::from(argv.join(" ").as_str())),
+                ("status", Json::from("skipped")),
+                ("why", Json::from(why)),
+            ])
+        };
+        let line = if !self.options.live {
+            skipped("not a live collection: a command describes the running host")
+        } else if self.late() {
+            self.summary.skipped += 1;
+            skipped("deadline reached")
+        } else {
+            let ran = command::run(argv, timeout);
+            let line = store_output(
+                &mut self.archive,
+                rule,
+                argv,
+                output,
+                &ran,
+                &mut self.summary,
+            )?;
+            self.outputs.insert(rule.id.clone(), ran.stdout);
+            line
+        };
+        self.manifest.push(line);
+        Ok(())
+    }
+
+    /// A follow rule: the executables the outputs it follows name, on this
+    /// volume, outside `exclude`.
+    fn follow(
+        &mut self,
+        rule: &Rule,
+        from: &[String],
+        exclude: &[Pattern],
+        files: &[FileEntry],
+        how: Copying,
+    ) {
+        let named: BTreeSet<Vec<String>> = from
+            .iter()
+            .filter_map(|id| self.outputs.get(id))
+            .flat_map(|output| follow::named(output))
+            .filter_map(|path| follow::on_volume(&path, self.options.drive))
+            .collect();
+        if named.is_empty() {
+            let why = if self.options.live {
+                "the outputs it follows name no executable on this volume"
+            } else {
+                "not a live collection: nothing to follow"
+            };
+            self.manifest.push(Json::object([
+                ("rule", Json::from(rule.id.as_str())),
+                ("status", Json::from("not_found")),
+                ("why", Json::from(why)),
+            ]));
+        }
+        let by_path: HashMap<Vec<String>, &FileEntry> = files
+            .iter()
+            .filter(|f| f.stream.is_none())
+            .map(|f| (lowered(&f.path), f))
+            .collect();
+        for path in named
+            .iter()
+            .filter(|p| !exclude.iter().any(|e| e.matches(p, None)))
+        {
+            match by_path.get(&lowered(path)) {
+                Some(file) => self.take(rule, file, how),
+                None => self.manifest.push(Json::object([
+                    ("rule", Json::from(rule.id.as_str())),
+                    (
+                        "path",
+                        Json::from(
+                            format!("{}:\\{}", self.options.drive, path.join("\\")).as_str(),
+                        ),
+                    ),
+                    ("status", Json::from("not_found")),
+                    (
+                        "why",
+                        Json::from("named by a live output, not on the volume"),
+                    ),
+                ])),
+            }
+        }
+    }
+
+    /// Collect `file` for `rule`, unless already collected, or listed as
+    /// skipped once past the deadline.
+    fn take(&mut self, rule: &Rule, file: &FileEntry, how: Copying) {
+        if !self.taken.insert((file.path.clone(), file.stream.clone())) {
+            return;
+        }
+        let drive = self.options.drive;
+        let line = if self.late() {
+            self.summary.skipped += 1;
+            listing(
+                rule,
+                file,
+                drive,
+                self.volume.method(),
+                "skipped_limit",
+                None,
+                Some("deadline reached"),
+            )
+        } else {
+            copy(
+                self.volume,
+                &mut self.archive,
+                rule,
+                file,
+                drive,
+                how,
+                &mut self.summary,
+            )
+        };
+        self.manifest.push(line);
+    }
+
+    fn late(&self) -> bool {
+        self.options.deadline.is_some_and(|d| Instant::now() >= d)
+    }
+}
+
+/// A path as compared: Windows compares names without case.
+fn lowered(path: &[String]) -> Vec<String> {
+    path.iter().map(|part| part.to_lowercase()).collect()
 }
 
 /// How a file is copied.

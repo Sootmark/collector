@@ -60,6 +60,18 @@ pub enum What {
         /// freed start), recording how many: the stored copy starts there.
         skip_leading_zeros: bool,
     },
+    /// The executables earlier command rules name (running processes'
+    /// images, services' binaries), outside `exclude`: what an implant
+    /// runs from, collected without being named in advance.
+    Follow {
+        /// The command rules whose outputs name them (`processes`,
+        /// `services`), earlier in the plan.
+        from: Vec<String>,
+        /// Paths not collected (`\Windows\**`).
+        exclude: Vec<Pattern>,
+        /// Most bytes kept of each file.
+        max_bytes: Option<u64>,
+    },
     /// What a command prints, on a live host only (state that is gone
     /// once the host is off: processes, connections, services).
     Command {
@@ -103,6 +115,8 @@ impl Plan {
             }
             let what = if let Some(argv) = rule.get("command") {
                 command(&id, rule, argv)?
+            } else if let Some(from) = rule.get("follow") {
+                follow(&id, rule, from, &rules)?
             } else {
                 files(&id, rule)?
             };
@@ -145,6 +159,45 @@ fn files(id: &str, rule: &Json) -> Result<What, PlanError> {
         paths,
         max_bytes: rule.get("max_bytes").and_then(Json::as_u64),
         skip_leading_zeros: rule.get("skip_leading_zeros") == Some(&Json::Bool(true)),
+    })
+}
+
+/// A follow rule: `follow` (earlier command rules' ids), and optionally
+/// `exclude` (path patterns) and `max_bytes`.
+fn follow(id: &str, rule: &Json, from: &Json, earlier: &[Rule]) -> Result<What, PlanError> {
+    let from: Vec<String> = from
+        .as_array()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|f| f.as_str().map(str::to_owned))
+        .collect();
+    let commands: Vec<&str> = earlier
+        .iter()
+        .filter(|r| matches!(r.what, What::Command { .. }))
+        .map(|r| r.id.as_str())
+        .collect();
+    if from.is_empty() || from.iter().any(|f| !commands.contains(&f.as_str())) {
+        return Err(PlanError(format!(
+            "{id}: follow names earlier command rules (here: {})",
+            commands.join(", ")
+        )));
+    }
+    let exclude = rule
+        .get("exclude")
+        .and_then(Json::as_array)
+        .unwrap_or_default()
+        .iter()
+        .map(|p| {
+            let text = p
+                .as_str()
+                .ok_or_else(|| PlanError(format!("{id}: an exclusion is not text")))?;
+            Pattern::parse(text).map_err(|e| PlanError(format!("{id}: {}", e.0)))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(What::Follow {
+        from,
+        exclude,
+        max_bytes: rule.get("max_bytes").and_then(Json::as_u64),
     })
 }
 

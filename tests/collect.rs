@@ -268,3 +268,51 @@ fn a_folder_through_the_file_api() {
     assert!(line.get("mft_record").is_none(), "no MFT here");
     assert!(text(line, "modified").is_some());
 }
+
+/// A follow rule on an output shaped as the processes command's: the
+/// executables it names are collected from the volume, the excluded ones
+/// and those not on it aside.
+#[cfg(unix)]
+#[test]
+fn executables_named_by_live_outputs_are_collected() {
+    let path = image();
+    let mut volume = Volume::open_image(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let options = Options {
+        drive: 'C',
+        host: "FIN-WKS-07".to_owned(),
+        deadline: None,
+        job: None,
+        recipients: Vec::new(),
+        live: true,
+        limits: None,
+    };
+    let processes = r#"[{"ExecutablePath":"C:\\ProgramData\\Intel\\m64.exe"},{"ExecutablePath":"C:\\Windows\\System32\\svchost.exe"},{"ExecutablePath":"C:\\Users\\Public\\gone.exe"}]"#;
+    let plan = format!(
+        r#"{{ "name": "p", "rules": [
+            {{ "id": "processes", "command": ["printf", "%s", {}], "output": "processes.json" }},
+            {{ "id": "binaries", "follow": ["processes"], "exclude": ["\\Windows\\**"] }} ] }}"#,
+        Json::from(processes)
+    );
+    let (out, _) = collect(
+        &mut volume,
+        &Plan::parse(&plan).unwrap(),
+        &options,
+        Vec::new(),
+    )
+    .unwrap();
+    let mut archive = zip::Archive::open(Cursor::new(out)).unwrap();
+    let lines = manifest(&mut archive);
+    let binaries: Vec<&Json> = lines
+        .iter()
+        .filter(|l| text(l, "rule") == Some("binaries"))
+        .collect();
+    assert_eq!(binaries.len(), 2, "{binaries:?}");
+    assert_eq!(
+        text(binaries[0], "stored"),
+        Some("C/ProgramData/Intel/m64.exe")
+    );
+    assert_eq!(text(binaries[0], "status"), Some("ok"));
+    assert_eq!(text(binaries[1], "status"), Some("not_found"));
+    assert!(!content(&mut archive, "C/ProgramData/Intel/m64.exe").is_empty());
+}

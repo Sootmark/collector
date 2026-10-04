@@ -10,6 +10,7 @@
 
 mod collect;
 mod command;
+mod follow;
 mod job;
 mod limits;
 mod pattern;
