@@ -9,11 +9,13 @@
 //! or not found. Nothing is written to the collected volume.
 
 mod collect;
+mod job;
 mod pattern;
 mod plan;
 mod volume;
 
 pub use collect::{collect, Options, Summary, MANIFEST, OUTCOME};
+pub use job::{Job, JobError, SIGNED_PREFIX};
 pub use pattern::{Pattern, PatternError};
 pub use plan::{Plan, PlanError, Rule, DEFAULT as DEFAULT_PLAN};
 pub use volume::{Disk, Volume};

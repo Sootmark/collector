@@ -22,6 +22,8 @@ path = "src/main.rs"
 common = { package = "sootmark-common", version = "0.3.6" }
 disk = { package = "sootmark-disk", version = "0.3.3" }
 zip = { package = "sootmark-zip", version = "0.4.0" }
+# Signatures are never written in-house (D11): ed25519-dalek (BSD-3-Clause).
+ed25519-dalek = { version = "2.1", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 proptest = "1"
