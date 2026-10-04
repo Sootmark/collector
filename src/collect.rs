@@ -33,6 +33,22 @@ pub struct Options {
     /// When to stop collecting: files not reached by then are listed as
     /// skipped, and the archive closed.
     pub deadline: Option<Instant>,
+    /// The signed job run, for the record: its case, signer and the
+    /// signer's key fingerprint.
+    pub job: Option<JobRecord>,
+    /// The keys the archive is encrypted to (`age1…`), for the record.
+    pub recipients: Vec<String>,
+}
+
+/// What `outcome.json` says of the job a run carried out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobRecord {
+    /// The case it was prepared for.
+    pub case: String,
+    /// Who signed it.
+    pub issuer: String,
+    /// Their key's fingerprint.
+    pub fingerprint: String,
 }
 
 /// What a run collected.
@@ -284,6 +300,26 @@ fn outcome(
             ]),
         ),
         ("host", Json::from(options.host.as_str())),
+        (
+            "job",
+            options.job.as_ref().map_or(Json::Null, |job| {
+                Json::object([
+                    ("case", Json::from(job.case.as_str())),
+                    ("issuer", Json::from(job.issuer.as_str())),
+                    ("fingerprint", Json::from(job.fingerprint.as_str())),
+                ])
+            }),
+        ),
+        (
+            "encrypted_to",
+            Json::Array(
+                options
+                    .recipients
+                    .iter()
+                    .map(|r| Json::from(r.as_str()))
+                    .collect(),
+            ),
+        ),
         ("source", Json::from(volume.source.as_str())),
         ("drive", Json::from(options.drive.to_string().as_str())),
         ("started", text(started)),
@@ -411,7 +447,7 @@ mod tests {
     fn leading_zero_pages_are_dropped_and_counted() {
         let mut journal = vec![0; 3 * PAGE];
         journal.extend_from_slice(&[0, 0, 7, 8]);
-        journal.extend(std::iter::repeat(0).take(PAGE));
+        journal.extend(std::iter::repeat_n(0, PAGE));
         let (out, skipped) = through(&journal, true);
         assert_eq!(skipped, 3 * PAGE as u64);
         assert_eq!(

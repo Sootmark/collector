@@ -1,9 +1,9 @@
 [package]
 name = "sootmark-collector"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
-rust-version = "1.80"
-description = "A forensic triage collector for Windows: reads NTFS raw (locked files, $MFT, $UsnJrnl, hives with their logs) and streams what a plan names into one zip with a hashed manifest. Open source, so what runs on your hosts can be read."
+rust-version = "1.85"
+description = "A forensic triage collector for Windows: reads NTFS raw (locked files, $MFT, $UsnJrnl, hives with their logs) and streams what a signed job names into one zip with a hashed manifest, encrypted to the case. Open source, so what runs on your hosts can be read."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Sootmark/collector"
 homepage = "https://sootmark.com"
@@ -19,6 +19,7 @@ name = "sootmark-collector"
 path = "src/main.rs"
 
 [dependencies]
+age = { package = "sootmark-age", version = "0.1.0" }
 common = { package = "sootmark-common", version = "0.3.6" }
 disk = { package = "sootmark-disk", version = "0.3.3" }
 zip = { package = "sootmark-zip", version = "0.4.0" }

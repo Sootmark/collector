@@ -66,7 +66,7 @@ impl Volume {
                 .iter()
                 .any(|f| f.path.len() == 1 && f.path[0].eq_ignore_ascii_case("Windows"));
             let rank = (windows, partition.length);
-            if best.as_ref().map_or(true, |(w, l, _)| rank > (*w, *l)) {
+            if best.as_ref().is_none_or(|(w, l, _)| rank > (*w, *l)) {
                 best = Some((windows, partition.length, ntfs));
             }
         }

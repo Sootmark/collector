@@ -3,12 +3,15 @@
 A forensic triage collector for Windows, open source so what runs on your hosts can be read. It reads the NTFS volume raw, through `sootmark-disk`'s reader, so the files Windows keeps open and no copy API reaches (`$MFT`, `$UsnJrnl:$J`, `$LogFile`, the registry hives and their transaction logs, Amcache, SRUM) are collected like any other, and streams what a plan names into one zip with a hashed manifest. Nothing is written to the collected volume.
 
 ```text
+sootmark-collector collect --job job.json --output E:\cases\ws042.zip.age
 sootmark-collector collect --output E:\cases\ws042.zip
 sootmark-collector collect --output E:\ws042.zip --plan my-plan.json --deadline 30
 sootmark-collector collect --output triage.zip --image disk.raw
 ```
 
 Run it as an administrator (raw volume access needs it), and write the archive to another volume than the one collected.
+
+A **job** is how a case asks for a collection: the workbench writes it with the plan, the case's key and an expiry, and signs it with the analyst's key. The collector refuses a job that was changed, has expired or is dated in the future, and shows who signed it and the key's fingerprint, for whoever runs it to confirm. The archive is then encrypted to the case in the [age](https://age-encryption.org) format (`sootmark-age`): only the case can read it, with Sootmark or the standard `age` tool. Without a job, `--recipient age1…` encrypts to a key you give; with neither, the collector warns that the archive is not encrypted.
 
 ## What you get
 
@@ -20,12 +23,13 @@ Run it as an administrator (raw volume access needs it), and write the archive t
 - **A deadline** (`--deadline <minutes>`): past it, files not yet reached are listed as skipped and the archive is closed, valid.
 - Large files are streamed, never copied to a temporary file or held in memory; hashes are computed on the way.
 
-Not yet: a signed job file (the plan, recipients and expiry signed by the case), encryption to the case's public key, resource limits through a Job Object and below-normal priority, volatile state (processes, connections, sessions, services), the OS API for volumes that aren't NTFS, and collecting what parsed artifacts point to.
+Not yet: a signature over the archive's manifest by a per-run key the job certifies, resource limits through a Job Object and below-normal priority, volatile state (processes, connections, sessions, services), the OS API for volumes that aren't NTFS, and collecting what parsed artifacts point to.
 
 ## How it's checked
 
 - The synthetic FIN-WKS-07 disk (made by `sootmark-disk`'s `make-samples.py`; `tests/fixtures/`): files read raw into the archive, a file's SHA-256 against The Sleuth Kit's `icat`, an alternate data stream stored apart, a file cut at `max_bytes`, a file named by two rules collected once, rules that found nothing listed.
 - On a real Windows volume in CI: the runner's `C:` collected raw with the built-in plan, the archive tested with Python's `zipfile`, and `$MFT`, `$J`, the `SYSTEM` hive and event logs required.
+- Jobs: a signed job is read; changed, expired and future-dated jobs are refused. An archive encrypted to a key opens with that key only, and records the job and its recipients.
 - Unit tests for path patterns and for reading a raw device in aligned blocks (Windows refuses unaligned reads).
 
 ## Licence

@@ -42,6 +42,8 @@ fn run(plan: &str) -> (zip::Archive<Cursor<Vec<u8>>>, collector::Summary) {
         drive: 'C',
         host: "FIN-WKS-07".to_owned(),
         deadline: None,
+        job: None,
+        recipients: Vec::new(),
     };
     let (out, summary) = collect(
         &mut volume,
@@ -161,4 +163,58 @@ fn files_streams_hashes_and_limits() {
         (summary.collected, summary.partial, summary.not_found),
         (2, 1, 1)
     );
+}
+
+#[test]
+fn an_encrypted_archive_opens_with_the_case_key_only() {
+    let identity = age::Identity::generate();
+    let recipient = identity.to_public();
+    let path = image();
+    let mut volume = Volume::open_image(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let options = Options {
+        drive: 'C',
+        host: "FIN-WKS-07".to_owned(),
+        deadline: None,
+        job: Some(collector::JobRecord {
+            case: "case-1".to_owned(),
+            issuer: "Alice".to_owned(),
+            fingerprint: "0123456789abcdef".to_owned(),
+        }),
+        recipients: vec![recipient.to_string()],
+    };
+    let encryptor = age::Encryptor::new(Vec::new(), &[recipient]).unwrap();
+    let (encryptor, _) = collect(
+        &mut volume,
+        &Plan::parse(DEFAULT_PLAN).unwrap(),
+        &options,
+        encryptor,
+    )
+    .unwrap();
+    let sealed = encryptor.finish().unwrap();
+    assert!(
+        zip::Archive::open(Cursor::new(sealed.clone())).is_err(),
+        "not readable as is"
+    );
+    let stranger = age::Identity::generate();
+    assert!(age::decrypt(sealed.as_slice(), &[stranger]).is_err());
+
+    let mut plain = Vec::new();
+    age::decrypt(sealed.as_slice(), &[identity])
+        .unwrap()
+        .read_to_end(&mut plain)
+        .unwrap();
+    let mut archive = zip::Archive::open(Cursor::new(plain)).unwrap();
+    let outcome =
+        json::parse(std::str::from_utf8(&content(&mut archive, OUTCOME)).unwrap()).unwrap();
+    let job = outcome.get("job").unwrap();
+    assert_eq!(job.get("case").and_then(Json::as_str), Some("case-1"));
+    assert_eq!(
+        outcome
+            .get("encrypted_to")
+            .and_then(Json::as_array)
+            .map(<[Json]>::len),
+        Some(1)
+    );
+    assert!(!content(&mut archive, "C/$MFT").is_empty());
 }
