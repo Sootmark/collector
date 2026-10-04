@@ -44,6 +44,7 @@ fn run(plan: &str) -> (zip::Archive<Cursor<Vec<u8>>>, collector::Summary) {
         deadline: None,
         job: None,
         recipients: Vec::new(),
+        live: false,
     };
     let (out, summary) = collect(
         &mut volume,
@@ -97,6 +98,15 @@ fn the_default_plan_collects_what_the_volume_has() {
     assert!(!content(&mut archive, "C/$MFT").is_empty());
     let history = "C/Users/svc_backup/AppData/Roaming/Microsoft/Windows/PowerShell/PSReadLine/ConsoleHost_history.txt";
     assert!(!content(&mut archive, history).is_empty());
+    // An image, not a running host: commands are listed, not run.
+    let processes = lines
+        .iter()
+        .find(|l| text(l, "rule") == Some("processes"))
+        .unwrap();
+    assert_eq!(text(processes, "status"), Some("skipped"));
+    assert!(text(processes, "why")
+        .unwrap()
+        .contains("not a live collection"));
     // No Windows folder on this volume: every such rule says so.
     let evtx = lines
         .iter()
@@ -182,6 +192,7 @@ fn an_encrypted_archive_opens_with_the_case_key_only() {
             fingerprint: "0123456789abcdef".to_owned(),
         }),
         recipients: vec![recipient.to_string()],
+        live: false,
     };
     let encryptor = age::Encryptor::new(Vec::new(), &[recipient]).unwrap();
     let (encryptor, _) = collect(

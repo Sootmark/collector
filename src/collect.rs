@@ -8,14 +8,15 @@
 
 use std::collections::HashSet;
 use std::io::{self, Read, Write};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use common::json::Json;
 use common::sha256::{hex, Sha256};
 use common::time::Ts;
 use disk::{FileEntry, Times};
 
-use crate::plan::{Plan, Rule};
+use crate::command::{self, Ran};
+use crate::plan::{Plan, Rule, What};
 use crate::volume::Volume;
 
 /// The archive's record of each file.
@@ -38,6 +39,9 @@ pub struct Options {
     pub job: Option<JobRecord>,
     /// The keys the archive is encrypted to (`age1…`), for the record.
     pub recipients: Vec<String>,
+    /// Collecting from the running host (not a disk image): command rules
+    /// run only then.
+    pub live: bool,
 }
 
 /// What `outcome.json` says of the job a run carried out.
@@ -87,47 +91,85 @@ pub fn collect<W: Write>(
     let mut summary = Summary::default();
     let mut taken: HashSet<(u64, Option<String>)> = HashSet::new();
     for rule in &plan.rules {
-        let mut matched: Vec<&FileEntry> = files
-            .iter()
-            .filter(|f| {
-                rule.paths
+        let late = options.deadline.is_some_and(|d| Instant::now() >= d);
+        match &rule.what {
+            What::Files {
+                paths,
+                max_bytes,
+                skip_leading_zeros,
+            } => {
+                let mut matched: Vec<&FileEntry> = files
                     .iter()
-                    .any(|p| p.matches(&f.path, f.stream.as_deref()))
-            })
-            .collect();
-        matched.sort_by_key(|f| f.display_path());
-        if matched.is_empty() {
-            summary.not_found += 1;
-            manifest.push(Json::object([
-                ("rule", Json::from(rule.id.as_str())),
-                ("status", Json::from("not_found")),
-            ]));
-        }
-        for file in matched {
-            if !taken.insert((file.record, file.stream.clone())) {
-                continue;
+                    .filter(|f| {
+                        paths
+                            .iter()
+                            .any(|p| p.matches(&f.path, f.stream.as_deref()))
+                    })
+                    .collect();
+                matched.sort_by_key(|f| f.display_path());
+                if matched.is_empty() {
+                    summary.not_found += 1;
+                    manifest.push(Json::object([
+                        ("rule", Json::from(rule.id.as_str())),
+                        ("status", Json::from("not_found")),
+                    ]));
+                }
+                for file in matched {
+                    if !taken.insert((file.record, file.stream.clone())) {
+                        continue;
+                    }
+                    let line = if options.deadline.is_some_and(|d| Instant::now() >= d) {
+                        summary.skipped += 1;
+                        listing(
+                            rule,
+                            file,
+                            options.drive,
+                            "skipped_limit",
+                            None,
+                            Some("deadline reached"),
+                        )
+                    } else {
+                        let how = Copying {
+                            limit: max_bytes.unwrap_or(u64::MAX),
+                            skip_zeros: *skip_leading_zeros,
+                        };
+                        copy(
+                            volume,
+                            &mut archive,
+                            rule,
+                            file,
+                            options.drive,
+                            how,
+                            &mut summary,
+                        )
+                    };
+                    manifest.push(line);
+                }
             }
-            let line = if options.deadline.is_some_and(|d| Instant::now() >= d) {
-                summary.skipped += 1;
-                listing(
-                    rule,
-                    file,
-                    options.drive,
-                    "skipped_limit",
-                    None,
-                    Some("deadline reached"),
-                )
-            } else {
-                copy(
-                    volume,
-                    &mut archive,
-                    rule,
-                    file,
-                    options.drive,
-                    &mut summary,
-                )
-            };
-            manifest.push(line);
+            What::Command {
+                argv,
+                output,
+                timeout_seconds,
+            } => {
+                let skipped = |why: &str| {
+                    Json::object([
+                        ("rule", Json::from(rule.id.as_str())),
+                        ("command", Json::from(argv.join(" ").as_str())),
+                        ("status", Json::from("skipped")),
+                        ("why", Json::from(why)),
+                    ])
+                };
+                let line = if !options.live {
+                    skipped("not a live collection: a command describes the running host")
+                } else if late {
+                    summary.skipped += 1;
+                    skipped("deadline reached")
+                } else {
+                    let ran = command::run(argv, Duration::from_secs(*timeout_seconds));
+                    store_output(&mut archive, rule, argv, output, &ran, &mut summary)?
+                };
+                manifest.push(line);
+            }
         }
     }
     let mut lines = String::new();
@@ -141,6 +183,79 @@ pub fn collect<W: Write>(
     Ok((archive.finish()?, summary))
 }
 
+/// How a file is copied.
+#[derive(Debug, Clone, Copy)]
+struct Copying {
+    /// Most bytes kept.
+    limit: u64,
+    /// Whether the whole zero pages it starts with are dropped.
+    skip_zeros: bool,
+}
+
+/// What a command printed, into the archive as `live/<output>`; its
+/// manifest line.
+fn store_output<W: Write>(
+    archive: &mut zip::Writer<W>,
+    rule: &Rule,
+    argv: &[String],
+    output: &str,
+    ran: &Ran,
+    summary: &mut Summary,
+) -> io::Result<Json> {
+    let stored = format!("live/{output}");
+    let mut line = Json::object([
+        ("rule", Json::from(rule.id.as_str())),
+        ("command", Json::from(argv.join(" ").as_str())),
+        ("method", Json::from("command")),
+    ]);
+    if let Some(started) = ran.started.to_iso8601() {
+        push(&mut line, "started", Json::from(started.as_str()));
+    }
+    push(
+        &mut line,
+        "duration_ms",
+        Json::from(ran.duration.as_millis() as u64),
+    );
+    let status = match (&ran.failure, ran.exit_code) {
+        (None, Some(0)) => "ok",
+        _ => "error",
+    };
+    if let Some(code) = ran.exit_code {
+        push(&mut line, "exit_code", Json::from(i64::from(code)));
+    }
+    if let Some(why) = &ran.failure {
+        push(&mut line, "why", Json::from(why.as_str()));
+    }
+    if !ran.stderr.is_empty() {
+        push(
+            &mut line,
+            "stderr",
+            Json::from(String::from_utf8_lossy(&ran.stderr).trim()),
+        );
+    }
+    if ran.stdout.is_empty() && ran.failure.is_some() {
+        summary.errors += 1;
+        push(&mut line, "status", Json::from(status));
+        return Ok(line);
+    }
+    let entry = archive.add(&stored, None, &mut ran.stdout.as_slice())?;
+    summary.bytes += entry.size;
+    if status == "ok" {
+        summary.collected += 1;
+    } else {
+        summary.errors += 1;
+    }
+    push(&mut line, "status", Json::from(status));
+    push(&mut line, "stored", Json::from(stored.as_str()));
+    push(&mut line, "collected_bytes", Json::from(entry.size));
+    push(
+        &mut line,
+        "sha256",
+        Json::from(hex(&Sha256::digest(&ran.stdout)).as_str()),
+    );
+    Ok(line)
+}
+
 /// Stream `file` into the archive; its manifest line.
 fn copy<W: Write>(
     volume: &mut Volume,
@@ -148,17 +263,18 @@ fn copy<W: Write>(
     rule: &Rule,
     file: &FileEntry,
     drive: char,
+    how: Copying,
     summary: &mut Summary,
 ) -> Json {
     let name = stored_name(drive, file);
-    let limit = rule.max_bytes.unwrap_or(u64::MAX);
+    let limit = how.limit;
     // What reached the archive: its size and hash, and the read error
     // that cut it short, if any.
     let mut written: Option<(u64, [u8; 32], Option<String>)> = None;
     let mut skipped = 0;
     let read = volume.read(file, &mut |content| {
         let limited = content.take(limit);
-        let mut zeros = SkipZeros::new(limited, rule.skip_leading_zeros);
+        let mut zeros = SkipZeros::new(limited, how.skip_zeros);
         let mut hashing = Hashing::new(&mut zeros);
         let added = archive.add(&name, file.times.modified, &mut hashing);
         let sha256 = hashing.finish();
@@ -333,7 +449,7 @@ fn outcome(
     ])
 }
 
-fn now() -> Ts {
+pub(crate) fn now() -> Ts {
     let micros = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_micros());

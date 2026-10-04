@@ -1,12 +1,111 @@
 {
   "name": "windows-triage",
   "rules": [
-    { "id": "mft", "title": "Master File Table", "paths": ["\\$MFT"] },
-    { "id": "logfile", "title": "NTFS transaction log", "paths": ["\\$LogFile"] },
+    {
+      "id": "processes",
+      "title": "Running processes, with command lines and owners",
+      "command": [
+        "powershell.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "[Console]::OutputEncoding = [Text.Encoding]::UTF8; $ErrorActionPreference = 'Stop'; Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, ExecutablePath, CommandLine, @{n='CreationDate';e={if ($_.CreationDate) { $_.CreationDate.ToUniversalTime().ToString('o') }}}, @{n='Owner';e={$o = Invoke-CimMethod -InputObject $_ -MethodName GetOwner -ErrorAction SilentlyContinue; if ($o.User) { \"$($o.Domain)\\$($o.User)\" }}} | ConvertTo-Json -Compress"
+      ],
+      "output": "processes.json",
+      "timeout_seconds": 300
+    },
+    {
+      "id": "connections",
+      "title": "TCP connections and listening ports, with their processes",
+      "command": [
+        "powershell.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "[Console]::OutputEncoding = [Text.Encoding]::UTF8; $ErrorActionPreference = 'Stop'; Get-NetTCPConnection | Select-Object LocalAddress, LocalPort, RemoteAddress, RemotePort, @{n='State';e={\"$($_.State)\"}}, OwningProcess, @{n='CreationTime';e={if ($_.CreationTime) { $_.CreationTime.ToUniversalTime().ToString('o') }}} | ConvertTo-Json -Compress"
+      ],
+      "output": "connections.json",
+      "timeout_seconds": 120
+    },
+    {
+      "id": "udp",
+      "title": "UDP endpoints, with their processes",
+      "command": [
+        "powershell.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "[Console]::OutputEncoding = [Text.Encoding]::UTF8; $ErrorActionPreference = 'Stop'; Get-NetUDPEndpoint | Select-Object LocalAddress, LocalPort, OwningProcess, @{n='CreationTime';e={if ($_.CreationTime) { $_.CreationTime.ToUniversalTime().ToString('o') }}} | ConvertTo-Json -Compress"
+      ],
+      "output": "udp.json",
+      "timeout_seconds": 120
+    },
+    {
+      "id": "services",
+      "title": "Services, with their binaries and accounts",
+      "command": [
+        "powershell.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "[Console]::OutputEncoding = [Text.Encoding]::UTF8; $ErrorActionPreference = 'Stop'; Get-CimInstance Win32_Service | Select-Object Name, DisplayName, State, StartMode, PathName, ProcessId, StartName | ConvertTo-Json -Compress"
+      ],
+      "output": "services.json",
+      "timeout_seconds": 120
+    },
+    {
+      "id": "dns-cache",
+      "title": "DNS client cache",
+      "command": [
+        "powershell.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "[Console]::OutputEncoding = [Text.Encoding]::UTF8; $ErrorActionPreference = 'Stop'; Get-DnsClientCache | Select-Object Entry, Name, Data, @{n='Type';e={\"$($_.Type)\"}}, TimeToLive | ConvertTo-Json -Compress"
+      ],
+      "output": "dns-cache.json",
+      "timeout_seconds": 60
+    },
+    {
+      "id": "sessions",
+      "title": "Logged-on users",
+      "command": [
+        "query.exe",
+        "user"
+      ],
+      "output": "sessions.txt",
+      "timeout_seconds": 60
+    },
+    {
+      "id": "mft",
+      "title": "Master File Table",
+      "paths": [
+        "\\$MFT"
+      ]
+    },
+    {
+      "id": "logfile",
+      "title": "NTFS transaction log",
+      "paths": [
+        "\\$LogFile"
+      ]
+    },
     {
       "id": "usn",
       "title": "USN change journal (its freed, zeroed start skipped)",
-      "paths": ["\\$Extend\\$UsnJrnl:$J"],
+      "paths": [
+        "\\$Extend\\$UsnJrnl:$J"
+      ],
       "skip_leading_zeros": true
     },
     {
@@ -28,11 +127,41 @@
         "\\Users\\*\\AppData\\Local\\Microsoft\\Windows\\UsrClass.dat*"
       ]
     },
-    { "id": "amcache", "title": "Amcache", "paths": ["\\Windows\\AppCompat\\Programs\\Amcache.hve*"] },
-    { "id": "evtx", "title": "Event logs", "paths": ["\\Windows\\System32\\winevt\\Logs\\*.evtx"] },
-    { "id": "prefetch", "title": "Prefetch", "paths": ["\\Windows\\Prefetch\\*.pf"] },
-    { "id": "srum", "title": "SRUM database", "paths": ["\\Windows\\System32\\sru\\SRUDB.dat"] },
-    { "id": "tasks", "title": "Scheduled tasks", "paths": ["\\Windows\\System32\\Tasks\\**"] },
+    {
+      "id": "amcache",
+      "title": "Amcache",
+      "paths": [
+        "\\Windows\\AppCompat\\Programs\\Amcache.hve*"
+      ]
+    },
+    {
+      "id": "evtx",
+      "title": "Event logs",
+      "paths": [
+        "\\Windows\\System32\\winevt\\Logs\\*.evtx"
+      ]
+    },
+    {
+      "id": "prefetch",
+      "title": "Prefetch",
+      "paths": [
+        "\\Windows\\Prefetch\\*.pf"
+      ]
+    },
+    {
+      "id": "srum",
+      "title": "SRUM database",
+      "paths": [
+        "\\Windows\\System32\\sru\\SRUDB.dat"
+      ]
+    },
+    {
+      "id": "tasks",
+      "title": "Scheduled tasks",
+      "paths": [
+        "\\Windows\\System32\\Tasks\\**"
+      ]
+    },
     {
       "id": "recent",
       "title": "LNK files and jump lists",
@@ -44,7 +173,9 @@
     {
       "id": "powershell",
       "title": "PowerShell history",
-      "paths": ["\\Users\\*\\AppData\\Roaming\\Microsoft\\Windows\\PowerShell\\PSReadLine\\*.txt"]
+      "paths": [
+        "\\Users\\*\\AppData\\Roaming\\Microsoft\\Windows\\PowerShell\\PSReadLine\\*.txt"
+      ]
     },
     {
       "id": "startup",
@@ -57,7 +188,9 @@
     {
       "id": "wmi",
       "title": "WMI repository",
-      "paths": ["\\Windows\\System32\\wbem\\Repository\\**"],
+      "paths": [
+        "\\Windows\\System32\\wbem\\Repository\\**"
+      ],
       "max_bytes": 1073741824
     }
   ]

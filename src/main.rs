@@ -148,6 +148,8 @@ fn run(args: &Args) -> Result<(), String> {
         deadline: args.deadline.map(|d| started + d),
         job,
         recipients,
+        // Commands describe the running host, not an image of a disk.
+        live: args.image.is_none(),
     };
     let out = BufWriter::new(file);
     let summary = if keys.is_empty() {

@@ -1,6 +1,8 @@
 //! What to collect: a plan of rules, each naming files by path pattern.
-//! A plan is JSON, closed and typed (no query language), and identified by
-//! the SHA-256 of its text, recorded with what it collected.
+//! A rule names files by path pattern, or a command whose output is the
+//! live host's state. A plan is JSON, closed and typed (no query language),
+//! and identified by the SHA-256 of its text, recorded with what it
+//! collected.
 //!
 //! ```json
 //! { "name": "triage",
@@ -8,7 +10,10 @@
 //!     { "id": "evtx", "title": "Event logs",
 //!       "paths": ["\\Windows\\System32\\winevt\\Logs\\*.evtx"] },
 //!     { "id": "usn", "title": "USN journal",
-//!       "paths": ["\\$Extend\\$UsnJrnl:$J"], "skip_leading_zeros": true } ] }
+//!       "paths": ["\\$Extend\\$UsnJrnl:$J"], "skip_leading_zeros": true },
+//!     { "id": "processes", "title": "Running processes",
+//!       "command": ["powershell.exe", "-NoProfile", "-Command", "…"],
+//!       "output": "processes.json", "timeout_seconds": 120 } ] }
 //! ```
 
 use common::json::{self, Json};
@@ -30,22 +35,45 @@ pub struct Plan {
     pub rules: Vec<Rule>,
 }
 
-/// Files to collect.
+/// What to collect: files, or the output of a command on the live host.
 #[derive(Debug, Clone)]
 pub struct Rule {
     /// Short identifier, unique in the plan (`evtx`).
     pub id: String,
     /// What it collects, for people.
     pub title: String,
-    /// The files, by path pattern.
-    pub paths: Vec<Pattern>,
-    /// Most bytes kept of each file: the rest is cut, and the file marked
-    /// partial. `None`: whole files.
-    pub max_bytes: Option<u64>,
-    /// Drop the whole zero pages a file starts with (a USN journal's
-    /// freed start), recording how many: the stored copy starts there.
-    pub skip_leading_zeros: bool,
+    /// Files, or a command.
+    pub what: What,
 }
+
+/// What a rule collects.
+#[derive(Debug, Clone)]
+pub enum What {
+    /// Files from the volume.
+    Files {
+        /// The files, by path pattern.
+        paths: Vec<Pattern>,
+        /// Most bytes kept of each file: the rest is cut, and the file
+        /// marked partial. `None`: whole files.
+        max_bytes: Option<u64>,
+        /// Drop the whole zero pages a file starts with (a USN journal's
+        /// freed start), recording how many: the stored copy starts there.
+        skip_leading_zeros: bool,
+    },
+    /// What a command prints, on a live host only (state that is gone
+    /// once the host is off: processes, connections, services).
+    Command {
+        /// The program and its arguments, run as given (no shell).
+        argv: Vec<String>,
+        /// The file its output is stored as, under `live/`.
+        output: String,
+        /// When to give up on it.
+        timeout_seconds: u64,
+    },
+}
+
+/// A command that hasn't finished by then is stopped.
+const DEFAULT_TIMEOUT_SECONDS: u64 = 120;
 
 /// Why a plan was refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,27 +101,15 @@ impl Plan {
             if rules.iter().any(|r| r.id == id) {
                 return Err(fail(format!("rule {id} appears twice")));
             }
-            let paths = rule
-                .get("paths")
-                .and_then(Json::as_array)
-                .unwrap_or_default()
-                .iter()
-                .map(|p| {
-                    let text = p
-                        .as_str()
-                        .ok_or_else(|| fail(format!("{id}: a path is not text")))?;
-                    Pattern::parse(text).map_err(|e| fail(format!("{id}: {}", e.0)))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            if paths.is_empty() {
-                return Err(fail(format!("{id}: no paths")));
-            }
+            let what = if let Some(argv) = rule.get("command") {
+                command(&id, rule, argv)?
+            } else {
+                files(&id, rule)?
+            };
             rules.push(Rule {
                 title: text_of(rule, "title").unwrap_or_else(|| id.clone()),
                 id,
-                paths,
-                max_bytes: rule.get("max_bytes").and_then(Json::as_u64),
-                skip_leading_zeros: rule.get("skip_leading_zeros") == Some(&Json::Bool(true)),
+                what,
             });
         }
         if rules.is_empty() {
@@ -105,6 +121,68 @@ impl Plan {
             rules,
         })
     }
+}
+
+/// A files rule: `paths`, and optionally `max_bytes` and
+/// `skip_leading_zeros`.
+fn files(id: &str, rule: &Json) -> Result<What, PlanError> {
+    let paths = rule
+        .get("paths")
+        .and_then(Json::as_array)
+        .unwrap_or_default()
+        .iter()
+        .map(|p| {
+            let text = p
+                .as_str()
+                .ok_or_else(|| PlanError(format!("{id}: a path is not text")))?;
+            Pattern::parse(text).map_err(|e| PlanError(format!("{id}: {}", e.0)))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if paths.is_empty() {
+        return Err(PlanError(format!("{id}: no paths")));
+    }
+    Ok(What::Files {
+        paths,
+        max_bytes: rule.get("max_bytes").and_then(Json::as_u64),
+        skip_leading_zeros: rule.get("skip_leading_zeros") == Some(&Json::Bool(true)),
+    })
+}
+
+/// A command rule: `command` (the program and its arguments), `output`
+/// (a plain file name) and optionally `timeout_seconds`.
+fn command(id: &str, rule: &Json, argv: &Json) -> Result<What, PlanError> {
+    let argv: Vec<String> = argv
+        .as_array()
+        .unwrap_or_default()
+        .iter()
+        .map(|a| a.as_str().map(str::to_owned))
+        .collect::<Option<_>>()
+        .filter(|argv: &Vec<String>| !argv.is_empty())
+        .ok_or_else(|| {
+            PlanError(format!(
+                "{id}: command is a list of strings, the program first"
+            ))
+        })?;
+    let output = rule
+        .get("output")
+        .and_then(Json::as_str)
+        .unwrap_or_default();
+    let plain = !output.is_empty()
+        && !output.starts_with('.')
+        && output
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b));
+    if !plain {
+        return Err(PlanError(format!("{id}: output must be a plain file name")));
+    }
+    Ok(What::Command {
+        argv,
+        output: output.to_owned(),
+        timeout_seconds: rule
+            .get("timeout_seconds")
+            .and_then(Json::as_u64)
+            .unwrap_or(DEFAULT_TIMEOUT_SECONDS),
+    })
 }
 
 #[cfg(test)]

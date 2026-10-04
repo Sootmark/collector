@@ -9,6 +9,7 @@
 //! or not found. Nothing is written to the collected volume.
 
 mod collect;
+mod command;
 mod job;
 mod pattern;
 mod plan;
@@ -17,7 +18,7 @@ mod volume;
 pub use collect::{collect, JobRecord, Options, Summary, MANIFEST, OUTCOME};
 pub use job::{Job, JobError, SIGNED_PREFIX};
 pub use pattern::{Pattern, PatternError};
-pub use plan::{Plan, PlanError, Rule, DEFAULT as DEFAULT_PLAN};
+pub use plan::{Plan, PlanError, Rule, What, DEFAULT as DEFAULT_PLAN};
 pub use volume::{Disk, Volume};
 
 /// This collector's version, recorded in every archive.

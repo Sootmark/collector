@@ -61,6 +61,12 @@ jobs:
           assert "C/$MFT" in names and "C/$Extend/$J" in names
           assert "C/Windows/System32/config/SYSTEM" in names
           print([l for l in lines if l["rule"] == "usn"])
+          for rule in ("processes", "connections", "services"):
+              line = next(l for l in lines if l["rule"] == rule)
+              assert line["status"] == "ok", line
+              rows = json.loads(archive.read(line["stored"]).decode("utf-8-sig"))
+              rows = rows if isinstance(rows, list) else [rows]
+              print(rule, len(rows), rows[0])
           print(json.loads(archive.read("outcome.json")))
           '@
           $check | python - "$env:RUNNER_TEMP\triage.zip"
