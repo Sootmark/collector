@@ -209,7 +209,8 @@
       "id": "tasks",
       "title": "Scheduled tasks",
       "paths": [
-        "\\Windows\\System32\\Tasks\\**"
+        "\\Windows\\System32\\Tasks\\**",
+        "\\Windows\\Tasks\\*.job"
       ]
     },
     {
@@ -274,6 +275,46 @@
         "\\Windows\\System32\\wbem\\Repository\\**"
       ],
       "max_bytes": 1073741824
+    },
+    {
+      "id": "defender",
+      "title": "Microsoft Defender detection history and support logs",
+      "paths": [
+        "\\ProgramData\\Microsoft\\Windows Defender\\Scans\\History\\Service\\DetectionHistory\\**",
+        "\\ProgramData\\Microsoft\\Windows Defender\\Support\\MPLog-*.log",
+        "\\ProgramData\\Microsoft\\Windows Defender\\Support\\MPDetection-*.log"
+      ]
+    },
+    {
+      "id": "ual",
+      "title": "User Access Logging databases (Windows Server)",
+      "paths": [
+        "\\Windows\\System32\\LogFiles\\Sum\\*.mdb"
+      ]
+    },
+    {
+      "id": "text-logs",
+      "title": "Windows text logs: Program Compatibility Assistant, SetupAPI, firewall, PowerShell transcripts, TeamViewer",
+      "paths": [
+        "\\Windows\\appcompat\\pca\\*.txt",
+        "\\Windows\\INF\\setupapi*.log",
+        "\\Windows\\System32\\LogFiles\\Firewall\\*.log",
+        "\\Users\\*\\Documents\\2*\\PowerShell_transcript.*.txt",
+        "\\Program Files\\TeamViewer\\*.log",
+        "\\Program Files\\TeamViewer\\Connections*.txt",
+        "\\Program Files (x86)\\TeamViewer\\*.log",
+        "\\Program Files (x86)\\TeamViewer\\Connections*.txt",
+        "\\Users\\*\\AppData\\Roaming\\TeamViewer\\*.log"
+      ],
+      "max_bytes": 268435456
+    },
+    {
+      "id": "iis",
+      "title": "IIS logs",
+      "paths": [
+        "\\inetpub\\logs\\LogFiles\\**\\*.log"
+      ],
+      "max_bytes": 268435456
     }
   ]
 }
